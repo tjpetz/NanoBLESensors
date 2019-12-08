@@ -1,5 +1,4 @@
 # NanoBLESensors
-A simple Arduino project using the Nano 33 IOT and BLE Sense to monitor environment conditions.
 
 This project uses a Nano 33 IoT and Nano 33 BLE Sense.  The intent is that that BLE Sense will publish all it's available
 sensor measurements via BLE.  The IoT will periodically poll the Sense to read and log the sensor measurements to an MQTT
