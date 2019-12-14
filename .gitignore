@@ -33,3 +33,6 @@
 
 # Mac Stuff
 .DS_Store
+
+# Keep our credential files out of Git
+arduino_secret.h
