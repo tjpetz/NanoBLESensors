@@ -9,8 +9,8 @@ be an additional small piece of fully functioning code.  My intent is to show ho
 
 14 Dec 2019:
 
-What is present is exceptionally ugly code, I advise not using this other than to 
-understand how "hacked together" code can and should be refactored.  The checkin at 
+What is present is exceptionally ugly code, I advise not using this other than to
+understand how "hacked together" code can and should be refactored.  The checkin at
 this point is focused just on the Nano IoT.  In this code we now include WiFi and MQTT.
 Once measurements are read, a connection is established to wifi and then the currrent
 measurements are sent to and MQTT broker.  In this case the broker is mosquitto on
