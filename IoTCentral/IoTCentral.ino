@@ -6,6 +6,16 @@
  * and then stop the BLE connection and connect to WiFi.
  * 
  * History:
+ *  27 Dev 2019 - After some experimentation we need a 6 second delay between stoping either 
+ *    BLE or Wifi and switching to the other.  The BLE code clearly does an NRESET on the 
+ *    Nina module which should take about 2.5S to reset.  However, when I set the delay to
+ *    much less than 6 seconds things stop after running a while.  Future fix should include
+ *    a watch dog timer and perhaps and update to the BLE code as a full NRESET should not
+ *    be necessary to use the BLE module.
+ *    Note, we also need a delay after sending our mqtt message before turning off the wifi.
+ *    Also starting to develop some old school macros for debugging.  Using Serial.print
+ *    or the debugging code both leave the code running in a production release.  This
+ *    takes space and consumes some power so I'd perfer they are only enabled when debugging.
  *  14 Dec 2019 - Very ugly code at this point.  It works but needs serious refactoring.
  *  13 Dec 2019 - Add WiFi and publish the temp and humidity to an MQTT broker.
  *  8 Dec 2019 19:00Z - Added reading the temperature characteristic.
@@ -27,11 +37,21 @@
 char ssid[] = SECRET_SSID;        // your network SSID (name)
 char pass[] = SECRET_PASS;    // your network password (use for WPA, or use as key for WEP)
 
+#define _DEBUG_
+#if defined(_DEBUG_)
+#define DEBUG_PRINT(s)    Serial.print(s)
+#define DEBUG_PRINTLN(s)  Serial.println(s);
+#else
+#define DEBUG_PRINT(s)
+#define DEBUG_PRINTLN(s)
+#endif
 
 WiFiClient wifiClient;                  // Our wifi client
 MqttClient mqttClient(wifiClient);      // Our MQTT client
 RTCZero rtc;                            // Real Time Clock so we can time stamp data
 
+const int ninaRebootDelay = 6000;       // Time (mS) between ending either Wifi or BLE and starting the other
+const int mqttTxDelay = 2500;           // Time (mS) between the last call to mqtt and turning off the wifi.
 
 const char broker[] = "bbsrv02.bblab.tjpetz.com";
 const int port = 1883;
@@ -43,58 +63,36 @@ float currentHumidity = 0.0;
 
 void setup() {
   Serial.begin(115200);
-  delay(500);     // Give serial a moment to start
+  delay(1500);     // Give serial a moment to start
  
   Debug.setDebugLevel(DBG_VERBOSE);
 
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
 
+  DEBUG_PRINT("Initializing...");
+  DEBUG_PRINTLN("...with a line break");
   
-  // Try starting the WiFi to see if it's okay to have it running while using BLE
-//  while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
-//    Debug.print(DBG_WARNING, "Waiting for Wifi to connect.");
-//    delay(500);
-//  }
-//  Debug.print(DBG_INFO, "WiFi Connected, address = %d.%d.%d.%d", WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
+  initializeRTC();
 
-//  initializeRTC();
-
+  DEBUG_PRINTLN("Yo!");
+  
   Debug.print(DBG_INFO, "Starting BLE");
   while (!BLE.begin()) {
     Debug.print(DBG_WARNING, "Error starting BLE");
     delay(1000);
   }
 
-  // Try starting the WiFi to see if it's okay to have it running while using BLE
-//  while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
-//    Debug.print(DBG_WARNING, "Waiting for Wifi to connect.");
-//    delay(500);
-//  }
-//  Debug.print(DBG_INFO, "WiFi Connected, address = %d.%d.%d.%d", WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
-
-//
-////  Debug.print(DBG_INFO, "Initiating scan...");
-//  BLE.scan();
   digitalWrite(LED_BUILTIN, LOW);
 }
 
 void loop() {
 
-//  delay(1000);
-//  return;
-  
   String deviceName = "Nano33BLESense-test";
 
   digitalWrite(LED_BUILTIN, HIGH);
   delay(250);
   digitalWrite(LED_BUILTIN, LOW);
-
-//  Debug.print(DBG_INFO, "Initiating BLE and Scan");
-//  while(!BLE.begin()) {
-//    Debug.print(DBG_WARNING, "Error starting the BLE");
-//    delay(500);
-//  }
 
   Debug.print(DBG_INFO, "Scanning for %s", deviceName.c_str());
   if (BLE.scanForName(deviceName)) {
@@ -152,25 +150,19 @@ void loop() {
         // disconnect and end so we can send the measurement
         peripheral.disconnect();
         BLE.end();
+        delay(ninaRebootDelay);
         } else {
           Serial.println("Humidity Service not found");
         }
-//        delay(500);
         // disconnect so we can start a new scan.
         peripheral.disconnect();
-//        delay(500);
-//        BLE.end();
       } else {
         Serial.println("Failed to connect.");
       }
     }
   }
 
-//  updatedMeasurement = false;
   if (updatedMeasurement) {
-    Serial.println("Wait for the Nina module to reset/restart");
-    delay(3500);
-    
     // We have a measurement so connect to WiFi and send it to the MQTT broker.
     Serial.println("Attempting to send measurement");
 
@@ -179,16 +171,6 @@ void loop() {
       delay(3000);
     }
   
-    Serial.println("Connected to the WiFi network");
-
-    Debug.print(DBG_INFO, "Attempting to get the WiFi status");
-    uint8_t stat = WiFi.status();
-    Serial.print("Status = "); Serial.println(stat);
-    
-//    if (WiFi.status() != WL_CONNECTED) {
-//      Debug.print(DBG_ERROR, "ERROR: the wifi network is not connected!");
-//    }
-//    
     Debug.print(DBG_INFO, "Attempting to connect to the MQTT broker: %s", broker);
   
     if (!mqttClient.connect(broker, port)) {
@@ -203,19 +185,15 @@ void loop() {
       char msg[80];
       sprintf(msg, "{sampleTime=%s,temperature=%.2f,humidity=%.2f}", dateTime, currentTemperature, currentHumidity);
       Debug.print(DBG_INFO, "Message = %s", msg);
-//      mqttClient.print("test");
       mqttClient.print(msg);
       mqttClient.endMessage();
+      delay(mqttTxDelay);
     }
-//    
-//    Serial.println();
-    delay(2000);
-//  
-//    Serial.println("Disconnecting from Wifi");
+    
+    Serial.println("Disconnecting from Wifi");
     WiFi.disconnect();
-//    WiFi.end();
-    delay(2500);
-//    Debug.print(DBG_INFO, "Restarting BLE");
+    WiFi.end();
+    delay(ninaRebootDelay);
     // Restart BLE
     if (!BLE.begin()) {
       Serial.println("Failed to start BLE");
@@ -224,14 +202,6 @@ void loop() {
     }
     updatedMeasurement = false;
   }
-  
-//  delay(5000);
-//  Serial.println("Restarting BLE scan");
-//  while (!BLE.begin()) {
-//      Serial.println("Waiting for BLE");
-//      delay(500);
-//  }
-//  BLE.scan();
 }
 
 // Initialize the RTC by calling NTP and setting the initial time in the RTC
@@ -277,10 +247,13 @@ void initializeRTC() {
     Serial.println("Sent message");
   }
 
-  delay(2500);
+  delay(mqttTxDelay);
+  
   // if the WiFi was connected when called leave it connected.  Otherwise end it.
   if (!wifiConnected) {
     Debug.print(DBG_INFO, "Turn off wifi as we have finished setting the time via NTP.");
     WiFi.end(); 
+    delay(ninaRebootDelay);
   }
+
 }
