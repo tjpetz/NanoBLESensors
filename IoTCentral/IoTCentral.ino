@@ -72,6 +72,8 @@ void setup() {
 
   DEBUG_PRINT("Initializing...");
   DEBUG_PRINTLN("...with a line break");
+  char buff[256];
+  snprintf(buff, sizeof(buff), "Test %s", "test");
   
   initializeRTC();
 
@@ -183,7 +185,7 @@ void loop() {
       sprintf(dateTime, "%04d-%02d-%02dT%02d:%02d:%02d", rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
       Debug.print(DBG_INFO, "Sample Time = %s", dateTime);
       char msg[80];
-      sprintf(msg, "{sampleTime=%s,temperature=%.2f,humidity=%.2f}", dateTime, currentTemperature, currentHumidity);
+      sprintf(msg, "{ \"sampleTime\": \"%s\", \"temperature\": %.2f, \"humidity\": %.2f }", dateTime, currentTemperature, currentHumidity);
       Debug.print(DBG_INFO, "Message = %s", msg);
       mqttClient.print(msg);
       mqttClient.endMessage();
@@ -239,7 +241,7 @@ void initializeRTC() {
   } else {
     const char topic[] = "tjpetz/environment";
     char buff[255];
-    sprintf(buff, "{status: 'boot at %04d-%02d-%02d %02d:%02d:%02d'}", rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds()); 
+    sprintf(buff, "{\"status\": \"boot at %04d-%02d-%02d %02d:%02d:%02d\"}", rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds()); 
     Serial.println("Connected to mqtt broker!");
     mqttClient.beginMessage(topic);
     mqttClient.print(buff);
