@@ -1,0 +1,159 @@
+[
+    {
+        "id": "213f3c48.c8e784",
+        "type": "tab",
+        "label": "Log Environment Measures",
+        "disabled": false,
+        "info": "Listen for messages on tjpetz/environment from MQTT.  Log them into an Influx DB."
+    },
+    {
+        "id": "7ba720dd.b9535",
+        "type": "mqtt-broker",
+        "z": "",
+        "name": "local server",
+        "broker": "bbsrv02.bblab.tjpetz.com",
+        "port": "1883",
+        "clientid": "",
+        "usetls": false,
+        "compatmode": false,
+        "keepalive": "60",
+        "cleansession": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthPayload": "",
+        "closeTopic": "",
+        "closeQos": "0",
+        "closePayload": "",
+        "willTopic": "",
+        "willQos": "0",
+        "willPayload": ""
+    },
+    {
+        "id": "c216b697.1bd928",
+        "type": "mqtt-broker",
+        "z": "",
+        "name": "test server",
+        "broker": "test.mosquitto.org",
+        "port": "1883",
+        "clientid": "",
+        "usetls": false,
+        "compatmode": false,
+        "keepalive": "60",
+        "cleansession": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthPayload": "",
+        "closeTopic": "",
+        "closeQos": "0",
+        "closePayload": "",
+        "willTopic": "",
+        "willQos": "0",
+        "willPayload": ""
+    },
+    {
+        "id": "c2c68ceb.7068c",
+        "type": "influxdb",
+        "z": "",
+        "hostname": "bbsrv02.bblab.tjpetz.com",
+        "port": "8086",
+        "protocol": "http",
+        "database": "environment",
+        "name": "",
+        "usetls": false,
+        "tls": ""
+    },
+    {
+        "id": "51cec766.9887b8",
+        "type": "mqtt in",
+        "z": "213f3c48.c8e784",
+        "name": "monitor-in (tjpetz/environment)",
+        "topic": "tjpetz/environment",
+        "qos": "0",
+        "datatype": "json",
+        "broker": "7ba720dd.b9535",
+        "x": 250,
+        "y": 200,
+        "wires": [
+            [
+                "626aca43.6b1114"
+            ]
+        ]
+    },
+    {
+        "id": "448f3d97.391344",
+        "type": "influxdb out",
+        "z": "213f3c48.c8e784",
+        "influxdb": "c2c68ceb.7068c",
+        "name": "",
+        "measurement": "humidity",
+        "precision": "",
+        "retentionPolicy": "",
+        "x": 980,
+        "y": 260,
+        "wires": []
+    },
+    {
+        "id": "626aca43.6b1114",
+        "type": "switch",
+        "z": "213f3c48.c8e784",
+        "name": "",
+        "property": "payload",
+        "propertyType": "msg",
+        "rules": [
+            {
+                "t": "hask",
+                "v": "status",
+                "vt": "str"
+            },
+            {
+                "t": "hask",
+                "v": "sensor",
+                "vt": "str"
+            }
+        ],
+        "checkall": "true",
+        "repair": false,
+        "outputs": 2,
+        "x": 530,
+        "y": 220,
+        "wires": [
+            [
+                "b390f9f2.197af8"
+            ],
+            [
+                "448f3d97.391344",
+                "3274ab56.a9af94"
+            ]
+        ]
+    },
+    {
+        "id": "3274ab56.a9af94",
+        "type": "debug",
+        "z": "213f3c48.c8e784",
+        "name": "Sensor Measurement",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "x": 880,
+        "y": 360,
+        "wires": []
+    },
+    {
+        "id": "b390f9f2.197af8",
+        "type": "debug",
+        "z": "213f3c48.c8e784",
+        "name": "Boot Message",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "x": 860,
+        "y": 180,
+        "wires": []
+    }
+]

@@ -184,8 +184,8 @@ void loop() {
       char dateTime[20];
       sprintf(dateTime, "%04d-%02d-%02dT%02d:%02d:%02d", rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
       Debug.print(DBG_INFO, "Sample Time = %s", dateTime);
-      char msg[80];
-      sprintf(msg, "{ \"sampleTime\": \"%s\", \"temperature\": %.2f, \"humidity\": %.2f }", dateTime, currentTemperature, currentHumidity);
+      char msg[128];
+      sprintf(msg, "{ \"sensor\": \"%s\", \"sampleTime\": \"%s\", \"temperature\": %.2f, \"humidity\": %.2f }", deviceName.c_str(), dateTime, currentTemperature, currentHumidity);
       Debug.print(DBG_INFO, "Message = %s", msg);
       mqttClient.print(msg);
       mqttClient.endMessage();

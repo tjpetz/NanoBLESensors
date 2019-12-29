@@ -36,3 +36,4 @@
 
 # Keep our credential files out of Git
 arduino_secret.h
+.vscode/*
