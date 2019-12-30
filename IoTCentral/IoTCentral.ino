@@ -38,12 +38,11 @@ char ssid[] = SECRET_SSID;        // your network SSID (name)
 char pass[] = SECRET_PASS;    // your network password (use for WPA, or use as key for WEP)
 
 #define _DEBUG_
-#if defined(_DEBUG_)
-#define DEBUG_PRINT(s)    Serial.print(s)
-#define DEBUG_PRINTLN(s)  Serial.println(s);
+#ifdef _DEBUG_
+#define MAX_DEBUG_BUFF    128
+#define DEBUG_PRINTF(...) {char buff[MAX_DEBUG_BUFF]; snprintf(buff, sizeof(buff), __VA_ARGS__); Serial.print(buff);}
 #else
-#define DEBUG_PRINT(s)
-#define DEBUG_PRINTLN(s)
+#define DEBUG_PRINTF(buff, fmt, ...)
 #endif
 
 WiFiClient wifiClient;                  // Our wifi client
@@ -62,7 +61,7 @@ float currentTemperature = 0.0;
 float currentHumidity = 0.0;
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(230400);
   delay(1500);     // Give serial a moment to start
  
   Debug.setDebugLevel(DBG_VERBOSE);
@@ -70,18 +69,11 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
 
-  DEBUG_PRINT("Initializing...");
-  DEBUG_PRINTLN("...with a line break");
-  char buff[256];
-  snprintf(buff, sizeof(buff), "Test %s", "test");
-  
   initializeRTC();
 
-  DEBUG_PRINTLN("Yo!");
-  
-  Debug.print(DBG_INFO, "Starting BLE");
+  DEBUG_PRINTF("Starting BLE\n");
   while (!BLE.begin()) {
-    Debug.print(DBG_WARNING, "Error starting BLE");
+    DEBUG_PRINTF("Error starting BLE\n");
     delay(1000);
   }
 
@@ -96,34 +88,35 @@ void loop() {
   delay(250);
   digitalWrite(LED_BUILTIN, LOW);
 
-  Debug.print(DBG_INFO, "Scanning for %s", deviceName.c_str());
+  DEBUG_PRINTF("Scanning for %s\n", deviceName.c_str());
   if (BLE.scanForName(deviceName)) {
     
     BLEDevice peripheral = BLE.available();
 
     if(peripheral) {
-      Debug.print(DBG_INFO, "=========================================================");
-      Debug.print(DBG_INFO, "Local Name: %s", peripheral.localName().c_str());
-      Debug.print(DBG_INFO, "Address: %s", peripheral.address().c_str());
-      Debug.print(DBG_INFO, "RSSI: %d", peripheral.rssi());
+      DEBUG_PRINTF("=========================================================\n");
+      DEBUG_PRINTF("\tLocal Name: %s\n", peripheral.localName().c_str());
+      DEBUG_PRINTF("\tAddress: %s\n", peripheral.address().c_str());
+      DEBUG_PRINTF("\tRSSI: %d\n", peripheral.rssi());
 
       BLE.stopScan();   // we have to stop scanning before we can connect to a peripheral
       
+      #ifdef _DEBUG_
       // print the advertised service UUIDs, if present
       if (peripheral.hasAdvertisedServiceUuid()) {
-        Serial.print("Advertised Service UUIDs: ");
+        DEBUG_PRINTF("Advertised Service UUIDs: ");
         for (int i = 0; i < peripheral.advertisedServiceUuidCount(); i++) {
-          Serial.print(peripheral.advertisedServiceUuid(i));
-          Serial.print(",");
+          DEBUG_PRINTF("%s, ", peripheral.advertisedServiceUuid(i).c_str());
         }
-        Serial.println();
+        DEBUG_PRINTF("\n");
       }
-
+      #endif
+      
       if (peripheral.connect()) {
-        Serial.println("Connected.");
+        DEBUG_PRINTF("Connected.\n");
 
         if (peripheral.discoverService("181a")) {
-          Serial.println("Humidity Service found");
+          DEBUG_PRINTF("Humidity Service found\n");
 
             // Read the humidity
             BLECharacteristic humidityCharacteristic = peripheral.characteristic("2A6F");
@@ -131,9 +124,9 @@ void loop() {
               uint16_t humidityRawValue;
               humidityCharacteristic.readValue(humidityRawValue); 
               currentHumidity = humidityRawValue / 100.0;
-              Serial.print("Humidity = "); Serial.print(currentHumidity); Serial.println("%");
+              DEBUG_PRINTF("Humidity = %.2f\%\n", currentHumidity);
             } else {
-              Serial.println("Cannot find humidity characteristic");
+              DEBUG_PRINTF("Cannot find humidity characteristic\n");
             }
 
             // Read the temperature
@@ -142,9 +135,9 @@ void loop() {
               int16_t temperatureRawValue;
               temperatureCharacteristic.readValue(temperatureRawValue);
               currentTemperature = temperatureRawValue / 100.0;
-              Serial.print("Temperature = "); Serial.print(currentTemperature); Serial.println("C");
+              DEBUG_PRINTF("Temperature = %.2fC\n", currentTemperature);
             } else {
-              Serial.println("Cannot find temperature characteristic");
+              DEBUG_PRINTF("Cannot find temperature characteristic\n");
             }
 
         updatedMeasurement = true;    // We have a new measurement
@@ -154,53 +147,53 @@ void loop() {
         BLE.end();
         delay(ninaRebootDelay);
         } else {
-          Serial.println("Humidity Service not found");
+          DEBUG_PRINTF("Humidity Service not found\n");
         }
         // disconnect so we can start a new scan.
         peripheral.disconnect();
       } else {
-        Serial.println("Failed to connect.");
+        DEBUG_PRINTF("Failed to connect.\n");
       }
     }
   }
 
   if (updatedMeasurement) {
     // We have a measurement so connect to WiFi and send it to the MQTT broker.
-    Serial.println("Attempting to send measurement");
+    DEBUG_PRINTF("Attempting to send measurement\n");
 
      while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
-      Serial.print(".");
+      DEBUG_PRINTF(".");
       delay(3000);
     }
   
-    Debug.print(DBG_INFO, "Attempting to connect to the MQTT broker: %s", broker);
+    DEBUG_PRINTF("Attempting to connect to the MQTT broker: %s\n", broker);
   
     if (!mqttClient.connect(broker, port)) {
-      Debug.print(DBG_ERROR, "MQTT connection failed! Error code = %d", mqttClient.connectError());
+      DEBUG_PRINTF("MQTT connection failed! Error code = %d\n", mqttClient.connectError());
     } else {
-      Debug.print(DBG_INFO, "You're connected to the MQTT broker!");
-      Debug.print(DBG_INFO, "Topic = %s", topic);
+      DEBUG_PRINTF("You're connected to the MQTT broker!\n");
+      DEBUG_PRINTF("Topic = %s", topic);
       mqttClient.beginMessage(topic);
       char dateTime[20];
-      sprintf(dateTime, "%04d-%02d-%02dT%02d:%02d:%02d", rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
-      Debug.print(DBG_INFO, "Sample Time = %s", dateTime);
+      snprintf(dateTime, sizeof(dateTime), "%04d-%02d-%02dT%02d:%02d:%02d", rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
+      DEBUG_PRINTF("Sample Time = %s\n", dateTime);
       char msg[128];
-      sprintf(msg, "{ \"sensor\": \"%s\", \"sampleTime\": \"%s\", \"temperature\": %.2f, \"humidity\": %.2f }", deviceName.c_str(), dateTime, currentTemperature, currentHumidity);
-      Debug.print(DBG_INFO, "Message = %s", msg);
+      snprintf(msg, sizeof(msg), "{ \"sensor\": \"%s\", \"sampleTime\": \"%s\", \"temperature\": %.2f, \"humidity\": %.2f }", deviceName.c_str(), dateTime, currentTemperature, currentHumidity);
+      DEBUG_PRINTF("Message = %s\n", msg);
       mqttClient.print(msg);
       mqttClient.endMessage();
       delay(mqttTxDelay);
     }
     
-    Serial.println("Disconnecting from Wifi");
+    DEBUG_PRINTF("Disconnecting from Wifi\n");
     WiFi.disconnect();
     WiFi.end();
     delay(ninaRebootDelay);
     // Restart BLE
     if (!BLE.begin()) {
-      Serial.println("Failed to start BLE");
+      DEBUG_PRINTF("Failed to start BLE\n");
     } else {
-      Serial.println("Restarted BLE");
+      DEBUG_PRINTF("Restarted BLE\n");
     }
     updatedMeasurement = false;
   }
@@ -213,47 +206,47 @@ void initializeRTC() {
   NTPClient timeClient(ntpUDP);           // NTP client - used to initialize the RTC when we don't have a battery
   bool wifiConnected = false;             // If WiFi is connected when called then we'll leave it connected on exit, otherwise we'll disconnect it.
 
-  Debug.print(DBG_INFO, "Initializing the RTC via NTP");
+  DEBUG_PRINTF("Initializing the RTC via NTP\n");
   
   wifiConnected = (WiFi.status() == WL_CONNECTED);
   if (!wifiConnected) {
-    Debug.print(DBG_INFO, "Starting WiFi for NTP Connection");
+    DEBUG_PRINTF("Starting WiFi for NTP Connection\n");
     while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
-      Debug.print(DBG_WARNING, "Waiting for Wifi to connect.");
+      DEBUG_PRINTF("Waiting for Wifi to connect.\n");
       delay(3000);
     }
-    Debug.print(DBG_INFO, "WiFi Connected, address = %d.%d.%d.%d", WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
+    DEBUG_PRINTF("WiFi Connected, address = %d.%d.%d.%d\n", WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
   }
 
   timeClient.update();    // get the current time from pool.ntp.com
 
   time_t ntpTime = timeClient.getEpochTime();
   struct tm* t = gmtime(&ntpTime);    // convert Unix epoch time to tm struct format
-  Debug.print(DBG_INFO, "NTP Time = %04d-%02d-%02d %02d:%02d:%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+  DEBUG_PRINTF("NTP Time = %04d-%02d-%02d %02d:%02d:%02d\n", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
 
   // Setup the RTC
   rtc.begin();
   rtc.setEpoch(ntpTime);
-  Debug.print(DBG_INFO, "RTC Time = %04d-%02d-%02d %02d:%02d:%02d", rtc.getYear(), rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
+  DEBUG_PRINTF("RTC Time = %04d-%02d-%02d %02d:%02d:%02d\n", rtc.getYear(), rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
 
   if(!mqttClient.connect(broker, port)) {
-      Serial.println("Error Connecting to mqtt broker");
+      DEBUG_PRINTF("Error Connecting to mqtt broker\n");
   } else {
     const char topic[] = "tjpetz/environment";
     char buff[255];
-    sprintf(buff, "{\"status\": \"boot at %04d-%02d-%02d %02d:%02d:%02d\"}", rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds()); 
-    Serial.println("Connected to mqtt broker!");
+    snprintf(buff, sizeof(buff), "{\"status\": \"boot at %04d-%02d-%02d %02d:%02d:%02d\"}", rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds()); 
+    DEBUG_PRINTF("Connected to mqtt broker!\n");
     mqttClient.beginMessage(topic);
     mqttClient.print(buff);
     mqttClient.endMessage();
-    Serial.println("Sent message");
+    DEBUG_PRINTF("Sent message\n");
   }
 
   delay(mqttTxDelay);
   
   // if the WiFi was connected when called leave it connected.  Otherwise end it.
   if (!wifiConnected) {
-    Debug.print(DBG_INFO, "Turn off wifi as we have finished setting the time via NTP.");
+    DEBUG_PRINTF("Turn off wifi as we have finished setting the time via NTP.\n");
     WiFi.end(); 
     delay(ninaRebootDelay);
   }
