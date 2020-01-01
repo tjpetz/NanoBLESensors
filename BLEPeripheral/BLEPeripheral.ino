@@ -13,6 +13,15 @@
 
 #include <ArduinoBLE.h>
 #include <Arduino_HTS221.h>
+#include <Arduino_LPS22HB.h>
+
+#define _DEBUG_
+#ifdef _DEBUG_
+#define MAX_DEBUG_BUFF    128
+#define DEBUG_PRINTF(...) {char _buff[MAX_DEBUG_BUFF]; snprintf(_buff, MAX_DEBUG_BUFF, __VA_ARGS__); SerialUSB.print(_buff);}
+#else
+#define DEBUG_PRINTF(buff, fmt, ...)
+#endif
 
 // BLE Environment Service
 BLEService environmentService("181A");
@@ -20,23 +29,29 @@ BLEService environmentService("181A");
 // BLE Humidity and Temperarture Characterists
 BLEUnsignedIntCharacteristic humidityCharacteristic("2A6F", BLERead | BLENotify);  // standard 16-bit UUID and remote client may read.
 BLEIntCharacteristic temperatureCharacteristic("2A6E", BLERead | BLENotify);  // standard UUID for temp characteristic in C 0.01
-
+BLEUnsignedLongCharacteristic pressureCharacteristic("2A6D", BLERead | BLENotify); //standard UUID for pressure characteristinc in Pa 0.1
 uint16_t oldHumidity = 0;   // last humidity level
 int16_t oldTemperature = 0; // last temperature
+uint32_t oldPressure = 0;   // last pressure
 long previousMillis = 0;    // last time the environment was checked (mS)
 
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
   
-  Serial.begin(115200);
+  Serial.begin(230400);
   delay(250);         // wait for serial to initialize but don't fail if there is no terminal.
 
   while (!HTS.begin()) {
     Serial.println("Error initializing HTS sensor");
     delay(1000);
   }
-    
+
+  while (!BARO.begin()) {
+    DEBUG_PRINTF("Error intializing the LPS22HB sensor");
+    delay(1000);
+  }
+  
   while (!BLE.begin()) {
     Serial.println("Error starting BLE");
     delay(1000);
@@ -47,9 +62,11 @@ void setup() {
   BLE.setAdvertisedService(environmentService);
   environmentService.addCharacteristic(humidityCharacteristic);
   environmentService.addCharacteristic(temperatureCharacteristic);
+  environmentService.addCharacteristic(pressureCharacteristic);
   BLE.addService(environmentService);
   humidityCharacteristic.writeValue((uint16_t)(HTS.readHumidity() * 100));
   temperatureCharacteristic.writeValue((int16_t)(HTS.readTemperature() * 100));
+  pressureCharacteristic.writeValue((uint32_t)(BARO.readPressure() * 10000));
 
   BLE.advertise();
 
@@ -60,6 +77,7 @@ void setup() {
 void loop() {
   uint16_t currentHumidity = 0;
   int16_t currentTemperature = 0;
+  uint32_t currentPressure = 0;
   
   // Wait for a central connection
   BLEDevice central = BLE.central();
@@ -88,15 +106,20 @@ void loop() {
             temperatureCharacteristic.writeValue(currentTemperature);
             oldTemperature = currentTemperature;
           }
+
+          // Update the pressure reading, reading is in kPa and we need to report in 0.1 pa
+          currentPressure = (uint32_t)(BARO.readPressure() * 10000);
+          if (currentPressure != oldPressure) {
+            pressureCharacteristic.writeValue(currentPressure);
+            oldPressure = currentPressure;
+          }
       }
     }
    Serial.println("Disconnect from central");
    digitalWrite(LED_BUILTIN, LOW);
+  } else {
+    DEBUG_PRINTF("No central connection\n");
   }
 
-  delay(250);
-  digitalWrite(LED_BUILTIN, HIGH);
   delay(500);
-  digitalWrite(LED_BUILTIN, LOW);
-  delay(250);
 }

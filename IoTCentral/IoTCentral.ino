@@ -21,8 +21,7 @@
  *  8 Dec 2019 19:00Z - Added reading the temperature characteristic.
  */
 
-#include <Arduino_DebugUtils.h>
-
+#include <Arduino.h>
 #include <ArduinoMqttClient.h>
 #include <WiFiNINA.h>
 #include <ArduinoBLE.h>
@@ -39,8 +38,8 @@ char pass[] = SECRET_PASS;    // your network password (use for WPA, or use as k
 
 #define _DEBUG_
 #ifdef _DEBUG_
-#define MAX_DEBUG_BUFF    128
-#define DEBUG_PRINTF(...) {char buff[MAX_DEBUG_BUFF]; snprintf(buff, sizeof(buff), __VA_ARGS__); Serial.print(buff);}
+#define MAX_DEBUG_BUFF    255
+#define DEBUG_PRINTF(...) {char _buff[MAX_DEBUG_BUFF]; snprintf(_buff, MAX_DEBUG_BUFF, __VA_ARGS__); SerialUSB.print(_buff);}
 #else
 #define DEBUG_PRINTF(buff, fmt, ...)
 #endif
@@ -51,6 +50,7 @@ RTCZero rtc;                            // Real Time Clock so we can time stamp 
 
 const int ninaRebootDelay = 6000;       // Time (mS) between ending either Wifi or BLE and starting the other
 const int mqttTxDelay = 2500;           // Time (mS) between the last call to mqtt and turning off the wifi.
+const unsigned long resetEverymS = 15 * 60 * 1000;      // Reset every 15 minutes to work around instabilities.
 
 const char broker[] = "bbsrv02.bblab.tjpetz.com";
 const int port = 1883;
@@ -59,13 +59,12 @@ const char topic[] = "tjpetz/environment";
 bool updatedMeasurement = false;
 float currentTemperature = 0.0;
 float currentHumidity = 0.0;
+float currentPressure = 0.0;
 
 void setup() {
   Serial.begin(230400);
   delay(1500);     // Give serial a moment to start
  
-  Debug.setDebugLevel(DBG_VERBOSE);
-
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
 
@@ -140,6 +139,17 @@ void loop() {
               DEBUG_PRINTF("Cannot find temperature characteristic\n");
             }
 
+            // Read the pressure
+            BLECharacteristic pressureCharacteristic = peripheral.characteristic("2A6D");
+            if (pressureCharacteristic) {
+              uint32_t pressureRawValue;
+              pressureCharacteristic.readValue(pressureRawValue);
+              currentPressure = pressureRawValue * 0.00001450; // convert to PSI
+              DEBUG_PRINTF("Pressure = %.2f PSI\n", currentPressure);
+            } else {
+              DEBUG_PRINTF("Cannot find pressure characteristic\n");
+            }
+
         updatedMeasurement = true;    // We have a new measurement
 
         // disconnect and end so we can send the measurement
@@ -177,8 +187,8 @@ void loop() {
       char dateTime[20];
       snprintf(dateTime, sizeof(dateTime), "%04d-%02d-%02dT%02d:%02d:%02d", rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
       DEBUG_PRINTF("Sample Time = %s\n", dateTime);
-      char msg[128];
-      snprintf(msg, sizeof(msg), "{ \"sensor\": \"%s\", \"sampleTime\": \"%s\", \"temperature\": %.2f, \"humidity\": %.2f }", deviceName.c_str(), dateTime, currentTemperature, currentHumidity);
+      char msg[255];
+      snprintf(msg, sizeof(msg), "{ \"sensor\": \"%s\", \"sampleTime\": \"%s\", \"temperature\": %.2f, \"humidity\": %.2f, \"pressure\": %.2f }", deviceName.c_str(), dateTime, currentTemperature, currentHumidity, currentPressure);
       DEBUG_PRINTF("Message = %s\n", msg);
       mqttClient.print(msg);
       mqttClient.endMessage();
@@ -197,6 +207,9 @@ void loop() {
     }
     updatedMeasurement = false;
   }
+
+  if (millis() >= resetEverymS)    // Force a reset to resolve instability issues.
+    NVIC_SystemReset();
 }
 
 // Initialize the RTC by calling NTP and setting the initial time in the RTC
