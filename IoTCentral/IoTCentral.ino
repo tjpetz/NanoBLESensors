@@ -48,7 +48,7 @@ WiFiClient wifiClient;                  // Our wifi client
 MqttClient mqttClient(wifiClient);      // Our MQTT client
 RTCZero rtc;                            // Real Time Clock so we can time stamp data
 
-const int ninaRebootDelay = 6000;       // Time (mS) between ending either Wifi or BLE and starting the other
+const int ninaRebootDelay = 3000;       // Time (mS) between ending either Wifi or BLE and starting the other
 const int mqttTxDelay = 2500;           // Time (mS) between the last call to mqtt and turning off the wifi.
 const unsigned long resetEverymS = 15 * 60 * 1000;      // Reset every 15 minutes to work around instabilities.
 
@@ -123,7 +123,7 @@ void loop() {
               uint16_t humidityRawValue;
               humidityCharacteristic.readValue(humidityRawValue); 
               currentHumidity = humidityRawValue / 100.0;
-              DEBUG_PRINTF("Humidity = %.2f\%\n", currentHumidity);
+              DEBUG_PRINTF("Humidity = %.2f %%\n", currentHumidity);
             } else {
               DEBUG_PRINTF("Cannot find humidity characteristic\n");
             }
@@ -134,7 +134,7 @@ void loop() {
               int16_t temperatureRawValue;
               temperatureCharacteristic.readValue(temperatureRawValue);
               currentTemperature = temperatureRawValue / 100.0;
-              DEBUG_PRINTF("Temperature = %.2fC\n", currentTemperature);
+              DEBUG_PRINTF("Temperature = %.2f C\n", currentTemperature);
             } else {
               DEBUG_PRINTF("Cannot find temperature characteristic\n");
             }
