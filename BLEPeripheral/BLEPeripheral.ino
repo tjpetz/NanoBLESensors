@@ -14,6 +14,7 @@
 #include <ArduinoBLE.h>
 #include <Arduino_HTS221.h>
 #include <Arduino_LPS22HB.h>
+#include "ColorLED.h"
 
 #define _DEBUG_
 #ifdef _DEBUG_
@@ -27,17 +28,28 @@
 BLEService environmentService("181A");
 
 // BLE Humidity and Temperarture Characterists
-BLEUnsignedIntCharacteristic humidityCharacteristic("2A6F", BLERead | BLENotify);  // standard 16-bit UUID and remote client may read.
-BLEIntCharacteristic temperatureCharacteristic("2A6E", BLERead | BLENotify);  // standard UUID for temp characteristic in C 0.01
-BLEUnsignedLongCharacteristic pressureCharacteristic("2A6D", BLERead | BLENotify); //standard UUID for pressure characteristinc in Pa 0.1
+BLEUnsignedIntCharacteristic humidityCharacteristic("2A6F", BLERead);  // standard 16-bit UUID and remote client may read.
+BLEIntCharacteristic temperatureCharacteristic("2A6E", BLERead);  // standard UUID for temp characteristic in C 0.01
+BLEUnsignedLongCharacteristic pressureCharacteristic("2A6D", BLERead); //standard UUID for pressure characteristinc in Pa 0.1
 uint16_t oldHumidity = 0;   // last humidity level
 int16_t oldTemperature = 0; // last temperature
 uint32_t oldPressure = 0;   // last pressure
 long previousMillis = 0;    // last time the environment was checked (mS)
 
+uint16_t humidityGreenLimit = 4500;
+uint16_t humidityAmberLimit = 6500;
+rgbLED led;
+
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
+
+  // Use the onboard LEDs to signal humidity in range
+  // Green will be <= 45%, Amber <= 60%, Red > 60%
+//  pinMode(LEDR, OUTPUT);
+//  pinMode(LEDG, OUTPUT);
+//  pinMode(LEDB, OUTPUT);
+  // turn the LEDs off (Set high)
   
   Serial.begin(230400);
   delay(250);         // wait for serial to initialize but don't fail if there is no terminal.
@@ -98,6 +110,14 @@ void loop() {
           if (currentHumidity != oldHumidity) {
             humidityCharacteristic.writeValue(currentHumidity);
             oldHumidity = currentHumidity;
+            Serial.print("Humidity = "); Serial.println(currentHumidity);
+            if (currentHumidity <= humidityGreenLimit) {
+              led.setColor(GREEN); // digitalWrite(LEDR, HIGH), digitalWrite(LEDG, LOW); digitalWrite(LEDB, HIGH);
+            } else if (currentHumidity <= humidityAmberLimit) {
+              led.setColor(YELLOW); // digitalWrite(LEDR, LOW), digitalWrite(LEDG, LOW); digitalWrite(LEDB, HIGH);
+            } else {
+              led.setColor(RED); // digitalWrite(LEDR, LOW), digitalWrite(LEDG, HIGH); digitalWrite(LEDB, HIGH);
+            }
           }
 
           // Update the temperature reading
