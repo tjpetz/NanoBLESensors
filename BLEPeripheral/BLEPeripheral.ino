@@ -36,26 +36,25 @@ int16_t oldTemperature = 0; // last temperature
 uint32_t oldPressure = 0;   // last pressure
 long previousMillis = 0;    // last time the environment was checked (mS)
 
+// Use the onboard LEDs to signal humidity in range
+// Green will be <= 45%, Amber <= 60%, Red > 60%
 uint16_t humidityGreenLimit = 4500;
 uint16_t humidityAmberLimit = 6500;
 rgbLED led;
 
+// WDT will reset if we get hung in a loop
+const int wdt_timeout = 5;      // 5 sec timeout
+
+
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
-
-  // Use the onboard LEDs to signal humidity in range
-  // Green will be <= 45%, Amber <= 60%, Red > 60%
-//  pinMode(LEDR, OUTPUT);
-//  pinMode(LEDG, OUTPUT);
-//  pinMode(LEDB, OUTPUT);
-  // turn the LEDs off (Set high)
   
   Serial.begin(230400);
-  delay(250);         // wait for serial to initialize but don't fail if there is no terminal.
+  delay(1000);         // wait for serial to initialize but don't fail if there is no terminal.
 
   while (!HTS.begin()) {
-    Serial.println("Error initializing HTS sensor");
+    DEBUG_PRINTF("Error initializing HTS sensor\n");
     delay(1000);
   }
 
@@ -65,7 +64,7 @@ void setup() {
   }
   
   while (!BLE.begin()) {
-    Serial.println("Error starting BLE");
+    DEBUG_PRINTF("Error starting BLE\n");
     delay(1000);
   }
 
@@ -82,7 +81,14 @@ void setup() {
 
   BLE.advertise();
 
-  Serial.println("BLE initialized, waiting for connections...");
+  DEBUG_PRINTF("BLE initialized, waiting for connections...\n");
+
+  // Configure the Watch Dog Timer
+  NRF_WDT->CONFIG = 0x01;
+  NRF_WDT->CRV = wdt_timeout * 32768 + 1;
+  NRF_WDT->RREN = 0x01;
+  NRF_WDT->TASKS_START = 1;
+  
   digitalWrite(LED_BUILTIN, LOW);
 }
 
@@ -90,15 +96,18 @@ void loop() {
   uint16_t currentHumidity = 0;
   int16_t currentTemperature = 0;
   uint32_t currentPressure = 0;
+
+  // Reset the WDT
+  NRF_WDT->RR[0] = WDT_RR_RR_Reload;
   
   // Wait for a central connection
   BLEDevice central = BLE.central();
 
   if(central) {
     digitalWrite(LED_BUILTIN, HIGH);
-    Serial.print("Connected to central: "); Serial.println(central.address());
-    Serial.print(" RSSI: "); Serial.println(central.rssi());
-    Serial.print(" Local Name: "); Serial.println(central.localName());  
+    DEBUG_PRINTF("Connected to central: %s\n", central.address().c_str());
+    DEBUG_PRINTF(" RSSI: %d\n", central.rssi());
+    DEBUG_PRINTF(" Local Name: %s\n", central.localName().c_str());  
 
     while (central.connected()) {
       long currentMillis = millis();
@@ -110,13 +119,12 @@ void loop() {
           if (currentHumidity != oldHumidity) {
             humidityCharacteristic.writeValue(currentHumidity);
             oldHumidity = currentHumidity;
-            Serial.print("Humidity = "); Serial.println(currentHumidity);
             if (currentHumidity <= humidityGreenLimit) {
-              led.setColor(GREEN); // digitalWrite(LEDR, HIGH), digitalWrite(LEDG, LOW); digitalWrite(LEDB, HIGH);
+              led.setColor(GREEN); 
             } else if (currentHumidity <= humidityAmberLimit) {
-              led.setColor(YELLOW); // digitalWrite(LEDR, LOW), digitalWrite(LEDG, LOW); digitalWrite(LEDB, HIGH);
+              led.setColor(YELLOW); 
             } else {
-              led.setColor(RED); // digitalWrite(LEDR, LOW), digitalWrite(LEDG, HIGH); digitalWrite(LEDB, HIGH);
+              led.setColor(RED); 
             }
           }
 
@@ -135,11 +143,11 @@ void loop() {
           }
       }
     }
-   Serial.println("Disconnect from central");
+   DEBUG_PRINTF("Disconnect from central\n");
    digitalWrite(LED_BUILTIN, LOW);
   } else {
     DEBUG_PRINTF("No central connection\n");
   }
 
-  delay(500);
+  delay(250);
 }
