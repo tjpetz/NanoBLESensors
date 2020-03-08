@@ -6,6 +6,8 @@
  * and then stop the BLE connection and connect to WiFi.
  * 
  * History:
+ *  14 Jan 2019 - Experimenting with driver reset approach as documented on community forum
+ *    to deal with switching between WiFi and BLE.  (https://forum.arduino.cc/index.php?topic=657710.0)
  *  27 Dev 2019 - After some experimentation we need a 6 second delay between stoping either 
  *    BLE or Wifi and switching to the other.  The BLE code clearly does an NRESET on the 
  *    Nina module which should take about 2.5S to reset.  However, when I set the delay to
@@ -24,6 +26,7 @@
 #include <Arduino.h>
 #include <ArduinoMqttClient.h>
 #include <WiFiNINA.h>
+#include "utility/wifi_drv.h"
 #include <ArduinoBLE.h>
 #include <NTPClient.h>
 #include <WiFiUdp.h>
@@ -47,6 +50,7 @@ char pass[] = SECRET_PASS;    // your network password (use for WPA, or use as k
 WiFiClient wifiClient;                  // Our wifi client
 MqttClient mqttClient(wifiClient);      // Our MQTT client
 RTCZero rtc;                            // Real Time Clock so we can time stamp data
+int wifiStatus = WL_IDLE_STATUS;        // Keep track of the WiFi status
 
 const int ninaRebootDelay = 3000;       // Time (mS) between ending either Wifi or BLE and starting the other
 const int mqttTxDelay = 2500;           // Time (mS) between the last call to mqtt and turning off the wifi.
@@ -54,7 +58,7 @@ const unsigned long resetEverymS = 15 * 60 * 1000;      // Reset every 15 minute
 
 const char broker[] = "bbsrv02.bblab.tjpetz.com";
 const int port = 1883;
-const char topic[] = "tjpetz/environment";
+const char topic[] = "tjpetz/environment/temp";
 
 bool updatedMeasurement = false;
 float currentTemperature = 0.0;
@@ -67,6 +71,18 @@ void setup() {
  
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
+
+  // Setup Wifi
+  DEBUG_PRINTF("Starting WiFi...\n");
+  while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
+    DEBUG_PRINTF("Waiting for Wifi to connect.\n");
+    delay(10000);
+  }
+  DEBUG_PRINTF("WiFi Connected, address = %d.%d.%d.%d\n", WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
+
+  IPAddress localRouter = {192,168,35,1};
+  int pingResult = WiFi.ping(localRouter);
+  DEBUG_PRINTF("Ping result = %d\n", pingResult);
 
   initializeRTC();
 
@@ -82,14 +98,16 @@ void setup() {
 void loop() {
 
   String deviceName = "Nano33BLESense-test";
-
+  char environmentService[] = "181A";
+  
   digitalWrite(LED_BUILTIN, HIGH);
   delay(250);
   digitalWrite(LED_BUILTIN, LOW);
 
-  DEBUG_PRINTF("Scanning for %s\n", deviceName.c_str());
-  if (BLE.scanForName(deviceName)) {
-    
+//  DEBUG_PRINTF("Scanning for %s\n", deviceName.c_str());
+//  if (BLE.scanForName(deviceName)) {
+  DEBUG_PRINTF("Scanning for %s\n", environmentService);
+  if (BLE.scanForUuid(environmentService)) {    
     BLEDevice peripheral = BLE.available();
 
     if(peripheral) {
@@ -160,7 +178,7 @@ void loop() {
           DEBUG_PRINTF("Humidity Service not found\n");
         }
         // disconnect so we can start a new scan.
-        peripheral.disconnect();
+//        peripheral.disconnect();
       } else {
         DEBUG_PRINTF("Failed to connect.\n");
       }
@@ -171,11 +189,21 @@ void loop() {
     // We have a measurement so connect to WiFi and send it to the MQTT broker.
     DEBUG_PRINTF("Attempting to send measurement\n");
 
-     while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
+    // DeInit and Re-init the wifi
+//    DEBUG_PRINTF("Resetting WiFi driver\n");
+//    wiFiDrv.wifiDriverDeinit();
+//    wiFiDrv.wifiDriverInit();
+
+    while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
       DEBUG_PRINTF(".");
       delay(3000);
     }
-  
+
+ 
+    IPAddress localRouter = {192,168,19,1};
+    int pingResult = WiFi.ping(localRouter);
+    DEBUG_PRINTF("Ping result = %d\n", pingResult);
+    
     DEBUG_PRINTF("Attempting to connect to the MQTT broker: %s\n", broker);
   
     if (!mqttClient.connect(broker, port)) {
@@ -192,7 +220,9 @@ void loop() {
       DEBUG_PRINTF("Message = %s\n", msg);
       mqttClient.print(msg);
       mqttClient.endMessage();
-      delay(mqttTxDelay);
+      mqttClient.stop();
+//      delay(mqttTxDelay);
+      //WiFiDrv.flush();
     }
     
     DEBUG_PRINTF("Disconnecting from Wifi\n");
@@ -245,7 +275,7 @@ void initializeRTC() {
   if(!mqttClient.connect(broker, port)) {
       DEBUG_PRINTF("Error Connecting to mqtt broker\n");
   } else {
-    const char topic[] = "tjpetz/environment";
+    const char topic[] = "tjpetz/environment/temp";
     char buff[255];
     snprintf(buff, sizeof(buff), "{\"status\": \"boot at %04d-%02d-%02d %02d:%02d:%02d\"}", rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds()); 
     DEBUG_PRINTF("Connected to mqtt broker!\n");
@@ -255,8 +285,9 @@ void initializeRTC() {
     DEBUG_PRINTF("Sent message\n");
   }
 
-  delay(mqttTxDelay);
-  
+  mqttClient.stop();
+  //delay(mqttTxDelay);
+   
   // if the WiFi was connected when called leave it connected.  Otherwise end it.
   if (!wifiConnected) {
     DEBUG_PRINTF("Turn off wifi as we have finished setting the time via NTP.\n");
