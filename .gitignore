@@ -36,4 +36,9 @@
 
 # Keep our credential files out of Git
 arduino_secret.h
+
+# Keep local config files out of Git
 .vscode/*
+arduino.json
+c_cpp_properties.json
+launch.json
