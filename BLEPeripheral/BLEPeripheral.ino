@@ -8,6 +8,7 @@
  * wakes up.
  * 
  * History:
+ *  8 Mar 2019 - Adding capabilities to configure the device via BLE
  *  8 Dec 2019 19:00Z - Added the temperature as a second characteristic.
  */
 
@@ -17,12 +18,11 @@
 #include "ColorLED.h"
 
 #define _DEBUG_
-#ifdef _DEBUG_
-#define MAX_DEBUG_BUFF    128
-#define DEBUG_PRINTF(...) {char _buff[MAX_DEBUG_BUFF]; snprintf(_buff, MAX_DEBUG_BUFF, __VA_ARGS__); SerialUSB.print(_buff);}
-#else
-#define DEBUG_PRINTF(buff, fmt, ...)
-#endif
+#include "Debug.h"
+
+#include "BLEConfigure.h"
+
+//AppConfiguration appConfig;
 
 // BLE Environment Service
 BLEService environmentService("181A");
@@ -79,6 +79,8 @@ void setup() {
   temperatureCharacteristic.writeValue((int16_t)(HTS.readTemperature() * 100));
   pressureCharacteristic.writeValue((uint32_t)(BARO.readPressure() * 10000));
 
+//  appConfiguration.config_configService();
+  
   BLE.advertise();
 
   DEBUG_PRINTF("BLE initialized, waiting for connections...\n");
