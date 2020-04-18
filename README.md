@@ -7,7 +7,13 @@ Broker.
 Rather than showing the finished project I will add commits at major points as the code evolves.  My plan is that each commit will
 be an additional small piece of fully functioning code.  My intent is to show how a project evolves from the simplest code to something full featured.
 
-29 Dev 2019:
+18 Apr 2020:
+
+Significant refactoring of the BLEPeripheral.  This version allows the use of BLE to configure the various
+parameters such as Name, Location, and levels for humidity alerts on the LED.  Additionally the settings are
+crudely written into flash memory so they survive a reboot.
+
+29 Dec 2019:
 
 Added Node-RED to the stack.  With Node-RED we are reading the MQTT messages splitting them up to select
 the sensor measurement to be inserted into a InfluxDB database.  Note, there is no security yet on this
