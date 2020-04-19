@@ -54,7 +54,7 @@ const unsigned long resetEverymS = 15 * 60 * 1000;      // Reset every 15 minute
 
 const char broker[] = "bbsrv02.bblab.tjpetz.com";
 const int port = 1883;
-const char topic[] = "tjpetz/environment";
+const char topic[] = "tjpetz/environment2";
 
 bool updatedMeasurement = false;
 float currentTemperature = 0.0;
@@ -83,9 +83,9 @@ void loop() {
 
   String deviceName = "Nano33BLESense-test";
 
-  digitalWrite(LED_BUILTIN, HIGH);
-  delay(250);
-  digitalWrite(LED_BUILTIN, LOW);
+//  digitalWrite(LED_BUILTIN, HIGH);
+//  delay(250);
+//  digitalWrite(LED_BUILTIN, LOW);
 
   DEBUG_PRINTF("Scanning for %s\n", deviceName.c_str());
   if (BLE.scanForName(deviceName)) {
@@ -154,8 +154,9 @@ void loop() {
 
         // disconnect and end so we can send the measurement
         peripheral.disconnect();
+        BLE.disconnect();
         BLE.end();
-        delay(ninaRebootDelay);
+//        delay(ninaRebootDelay);
         } else {
           DEBUG_PRINTF("Humidity Service not found\n");
         }
@@ -198,7 +199,7 @@ void loop() {
     DEBUG_PRINTF("Disconnecting from Wifi\n");
     WiFi.disconnect();
     WiFi.end();
-    delay(ninaRebootDelay);
+//    delay(ninaRebootDelay);
     // Restart BLE
     if (!BLE.begin()) {
       DEBUG_PRINTF("Failed to start BLE\n");
@@ -208,8 +209,9 @@ void loop() {
     updatedMeasurement = false;
   }
 
-  if (millis() >= resetEverymS)    // Force a reset to resolve instability issues.
-    NVIC_SystemReset();
+  delay(500);
+//  if (millis() >= resetEverymS)    // Force a reset to resolve instability issues.
+//    NVIC_SystemReset();
 }
 
 // Initialize the RTC by calling NTP and setting the initial time in the RTC
@@ -260,8 +262,9 @@ void initializeRTC() {
   // if the WiFi was connected when called leave it connected.  Otherwise end it.
   if (!wifiConnected) {
     DEBUG_PRINTF("Turn off wifi as we have finished setting the time via NTP.\n");
+    WiFi.disconnect();
     WiFi.end(); 
-    delay(ninaRebootDelay);
+//    delay(ninaRebootDelay);
   }
 
 }
