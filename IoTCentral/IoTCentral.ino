@@ -6,6 +6,9 @@
  * and then stop the BLE connection and connect to WiFi.
  * 
  * History:
+ *  22 May 2020 - Refactored, added the host name for the WiFi connection as there is some
+ *    reference on the web that timeouts and rejects on Unifi wifi network may be due to
+ *    missing hostname.
  *  27 Dev 2019 - After some experimentation we need a 6 second delay between stoping either 
  *    BLE or Wifi and switching to the other.  The BLE code clearly does an NRESET on the 
  *    Nina module which should take about 2.5S to reset.  However, when I set the delay to
