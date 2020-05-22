@@ -6,6 +6,9 @@
  * and then stop the BLE connection and connect to WiFi.
  * 
  * History:
+ *  22 May 2020 - Refactored, added the host name for the WiFi connection as there is some
+ *    reference on the web that timeouts and rejects on Unifi wifi network may be due to
+ *    missing hostname.
  *  14 Jan 2019 - Experimenting with driver reset approach as documented on community forum
  *    to deal with switching between WiFi and BLE.  (https://forum.arduino.cc/index.php?topic=657710.0)
  *  27 Dev 2019 - After some experimentation we need a 6 second delay between stoping either 
