@@ -43,7 +43,7 @@ BLEService environmentService("181A");
 
 // BLE Humidity and Temperarture Characterists
 BLEUnsignedIntCharacteristic humidityCharacteristic("2A6F", BLERead | BLENotify);  // standard 16-bit UUID and remote client may read.
-BLEIntCharacteristic temperatureCharacteristic("2A6E", BLERead | BLENotify);  // standard UUID for temp characteristic in C 0.01
+BLEIntCharacteristic temperatureCharacteristic("2A6E", BLERead | BLENotify | BLEBroadcast);  // standard UUID for temp characteristic in C 0.01
 BLEUnsignedLongCharacteristic pressureCharacteristic("2A6D", BLERead | BLENotify); //standard UUID for pressure characteristinc in Pa 0.1
 
 // Most recent measurements
@@ -66,7 +66,7 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
   
-  Serial.begin(230400);
+  Serial.begin(115200);
   delay(3500);         // wait for serial to initialize but don't fail if there is no terminal.
 
   while (!HTS.begin()) {
@@ -78,7 +78,7 @@ void setup() {
     DEBUG_PRINTF("Error intializing the LPS22HB sensor");
     delay(1000);
   }
-  
+
   while (!BLE.begin()) {
     DEBUG_PRINTF("Error starting BLE\n");
     delay(1000);
@@ -108,6 +108,9 @@ void setup() {
   humidityCharacteristic.writeValue((uint16_t)(HTS.readHumidity() * 100));
   temperatureCharacteristic.writeValue((int16_t)(HTS.readTemperature() * 100));
   pressureCharacteristic.writeValue((uint32_t)(BARO.readPressure() * 10000));
+
+  // broadcast the temperature in the advertisement
+  temperatureCharacteristic.broadcast();
   
   config_configService();
   
@@ -119,6 +122,7 @@ void setup() {
   BLE.addService(environmentService);
 
   BLE.setAdvertisedService(environmentService);
+  BLE.setAdvertisingInterval(315);    
   BLE.advertise();
 
   DEBUG_PRINTF("BLE initialized, waiting for connections...\n");
@@ -147,11 +151,11 @@ void loop() {
       humidityCharacteristic.writeValue(currentHumidity);
       oldHumidity = currentHumidity;
       if (currentHumidity <= humidityGreenLimit) {
-        led.setColor(GREEN); 
+        led.setColor(0,25,0); // GREEN); 
       } else if (currentHumidity <= humidityAmberLimit) {
-        led.setColor(YELLOW); 
+        led.setColor(25, 25, 0); // YELLOW); 
       } else {
-        led.setColor(RED); 
+        led.setColor(25, 0, 0); // RED); 
       }
     }
   
@@ -174,11 +178,13 @@ void loop() {
 }
 
 void on_BLECentralConnected(BLEDevice central) {
-  DEBUG_PRINTF("Connection from: %s, rssi = %d\n", central.address().c_str(), central.rssi());
-  digitalWrite(LED_BUILTIN, HIGH);  
+  DEBUG_PRINTF("Connection from: %s, rssi = %d, at %lu\n", central.address().c_str(), central.rssi(), millis());
+  digitalWrite(LED_BUILTIN, HIGH); 
+  BLE.advertise(); 
 }
 
 void on_BLECentralDisconnected(BLEDevice central) {
-  DEBUG_PRINTF("Disconnected from: %s\n", central.address().c_str());
-  digitalWrite(LED_BUILTIN, LOW);  
+  DEBUG_PRINTF("Disconnected from: %s, at %lu\n", central.address().c_str(), millis());
+  digitalWrite(LED_BUILTIN, LOW); 
+  BLE.advertise(); 
 }
