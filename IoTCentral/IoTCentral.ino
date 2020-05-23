@@ -193,12 +193,8 @@ void loop() {
         } else {
           DEBUG_PRINTF("Failed to connect.\n");
         }
-
-        // disconnect so we can start a new scan.
-//        peripheral.disconnect();
-      } else {
-        DEBUG_PRINTF("Failed to connect.\n");
-
+     } else {
+        DEBUG_PRINTF("Peripheral not available.\n");
       }
     }
 
@@ -303,13 +299,8 @@ void initializeRTC() {
   }
 
   mqttClient.stop();
-  //delay(mqttTxDelay);
+  // delay(mqttTxDelay);
    
-  // if the WiFi was connected when called leave it connected.  Otherwise end it.
-  if (!wifiConnected) {
-    DEBUG_PRINTF("Turn off wifi as we have finished setting the time via NTP.\n");
-    WiFi.disconnect();
-    WiFi.end(); 
-  }
-
+  WiFi.disconnect();
+  WiFi.end(); 
 }
