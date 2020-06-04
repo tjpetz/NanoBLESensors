@@ -97,7 +97,7 @@ void setup() {
   DEBUG_PRINTF("flash address = 0x%08x\n", (unsigned int)&flashConfig);
   DEBUG_PRINTF("NRF_NVMC->READY = 0x%04x\n", NRF_NVMC->READY);
   
-  BLE.setConnectionInterval(0x0006, 0x0c80);    // 7.5 ms to 4 s
+  // BLE.setConnectionInterval(0x0006, 0x0c80);    // 7.5 ms to 4 s
   
   // Configure the BLE settings
   BLE.setLocalName(sensorName.c_str());
