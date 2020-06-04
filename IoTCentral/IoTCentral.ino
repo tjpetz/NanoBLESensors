@@ -6,6 +6,10 @@
  * and then stop the BLE connection and connect to WiFi.
  * 
  * History:
+ *  4 Jun 2020 - update to use more generic name for the mqtt broker.
+ *  31 May 2020 - After a few hours the board is unable to connect anymore to the BLE
+ *    Sense.  Rebooting established reconnection.  Try adding a reset counter.  If after
+ *    some number of failed connects, reset the board.
  *  22 May 2020 - Refactored, added the host name for the WiFi connection as there is some
  *    reference on the web that timeouts and rejects on Unifi wifi network may be due to
  *    missing hostname.
@@ -29,10 +33,7 @@
 #include <Arduino.h>
 #include <ArduinoMqttClient.h>
 #include <WiFiNINA.h>
-#include "utility/wifi_drv.h"
 #include <ArduinoBLE.h>
-#include <NTPClient.h>
-#include <WiFiUdp.h>
 #include <RTCZero.h>
 #include <time.h>
 #include <ArduinoLowPower.h>
@@ -43,12 +44,7 @@ char ssid[] = SECRET_SSID;        // your network SSID (name)
 char pass[] = SECRET_PASS;    // your network password (use for WPA, or use as key for WEP)
 
 #define _DEBUG_
-#ifdef _DEBUG_
-#define MAX_DEBUG_BUFF    255
-#define DEBUG_PRINTF(...) {char _buff[MAX_DEBUG_BUFF]; snprintf(_buff, MAX_DEBUG_BUFF, __VA_ARGS__); SerialUSB.print(_buff);}
-#else
-#define DEBUG_PRINTF(buff, fmt, ...)
-#endif
+#include "Debug.h"
 
 WiFiClient wifiClient;                  // Our wifi client
 MqttClient mqttClient(wifiClient);      // Our MQTT client
@@ -61,10 +57,11 @@ const unsigned long resetEverymS = 15 * 60 * 1000;      // Reset every 15 minute
 unsigned long now = 0;
 unsigned long lastMeasureTime = 0;
 
-const char broker[] = "bbsrv02.bblab.tjpetz.com";
+const char broker[] = "mqtt.bb.tjpetz.com";
 const int port = 1883;
 
-const char topic[] = "tjpetz/environment2";
+const char topicRoot[] = "tjpetz.com/sensor";
+const unsigned int MAX_TOPIC_LENGTH = 255;
 
 const char hostname[] = "iot_central_001";
 
@@ -74,8 +71,12 @@ float currentTemperature = 0.0;
 float currentHumidity = 0.0;
 float currentPressure = 0.0;
 String connectedDeviceName;
+byte macAddress[6];               // MAC address of the Wifi which we'll use in reporting
 
 const char environmentServiceUUID[] = "181A";       // the standard UUID for the environment service
+
+const int maxFailedConnections = 5;             // force a reset after this many failed connections.
+int failedConnectionsCounter = 0;               // counter to keep track of failed connections
 
 void setup() {
   Serial.begin(115200);
@@ -83,20 +84,12 @@ void setup() {
  
   DEBUG_PRINTF("RESET Register = 0x%0x\n", PM->RCAUSE.reg);
 
+  WiFi.macAddress(macAddress);
+  DEBUG_PRINTF("MAC Address = %02x:%02x:%02x:%02x:%02x:%02x\n", macAddress[5], macAddress[4], 
+    macAddress[3], macAddress[2], macAddress[1], macAddress[0]);
+
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
-
-  // Setup Wifi
-  DEBUG_PRINTF("Starting WiFi...\n");
-  while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
-    DEBUG_PRINTF("Waiting for Wifi to connect.\n");
-    delay(10000);
-  }
-  DEBUG_PRINTF("WiFi Connected, address = %d.%d.%d.%d\n", WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
-
-  IPAddress localRouter = {192,168,35,1};
-  int pingResult = WiFi.ping(localRouter);
-  DEBUG_PRINTF("Ping result = %d\n", pingResult);
 
   initializeRTC();
 
@@ -147,6 +140,9 @@ void loop() {
         if (peripheral.connect()) {
           DEBUG_PRINTF("Connected.\n");
 
+          // reset the failed connection counter
+          failedConnectionsCounter = 0;
+
           if (peripheral.discoverService("181a")) {
             DEBUG_PRINTF("Environment Service found\n");
 
@@ -196,6 +192,14 @@ void loop() {
      } else {
         DEBUG_PRINTF("Peripheral not available.\n");
       }
+    } else {
+      if (failedConnectionsCounter >= maxFailedConnections) {
+        // Too many failures try a reset.
+        DEBUG_PRINTF("Forcing a reset due to too many failed scans.\n");
+        NVIC_SystemReset();
+      } else {
+        ++failedConnectionsCounter;
+      }
     }
 
     if (updatedMeasurement) {
@@ -218,6 +222,11 @@ void loop() {
           DEBUG_PRINTF("MQTT connection failed! Error code = %d\n", mqttClient.connectError());
         } else {
           DEBUG_PRINTF("You're connected to the MQTT broker!\n");
+
+          char topic[MAX_TOPIC_LENGTH];
+
+          snprintf(topic, sizeof(topic), "%s/%s", topicRoot, connectedDeviceName.c_str());
+
           DEBUG_PRINTF("Topic = %s\n", topic);
           mqttClient.beginMessage(topic);
           char dateTime[20];
@@ -256,27 +265,29 @@ void loop() {
 // Initialize the RTC by calling NTP and setting the initial time in the RTC
 void initializeRTC() {
   // Note these are both locally scoped as we do not need them after the RTC is initialized.
-  WiFiUDP ntpUDP;                         // Need UDP when calling NTP server
-  NTPClient timeClient(ntpUDP);           // NTP client - used to initialize the RTC when we don't have a battery
-  bool wifiConnected = false;             // If WiFi is connected when called then we'll leave it connected on exit, otherwise we'll disconnect it.
 
   DEBUG_PRINTF("Initializing the RTC via NTP\n");
   
-  WiFi.setHostname(hostname);
+  DEBUG_PRINTF("Starting WiFi for NTP Connection\n");
+  while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
+    DEBUG_PRINTF("Waiting for Wifi to connect.\n");
+    delay(3000);
+  }
+  DEBUG_PRINTF("WiFi Connected, address = %d.%d.%d.%d\n", WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
 
-  wifiConnected = (WiFi.status() == WL_CONNECTED);
-  if (!wifiConnected) {
-    DEBUG_PRINTF("Starting WiFi for NTP Connection\n");
-    while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
-      DEBUG_PRINTF("Waiting for Wifi to connect.\n");
-      delay(3000);
-    }
-    DEBUG_PRINTF("WiFi Connected, address = %d.%d.%d.%d\n", WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
+  time_t ntpTime = WiFi.getTime();
+  int maxTries = 10;
+  int tries = 0;
+
+  // try a few times to get the time, it takes a moment to reach the NTP servers.
+  while (ntpTime == 0 && tries < maxTries) {
+    ntpTime = WiFi.getTime();
+    tries++;
+    delay(3000);
   }
 
-  timeClient.update();    // get the current time from pool.ntp.com
+// TODO: handle the situation if no time is available.
 
-  time_t ntpTime = timeClient.getEpochTime();
   struct tm* t = gmtime(&ntpTime);    // convert Unix epoch time to tm struct format
   DEBUG_PRINTF("NTP Time = %04d-%02d-%02d %02d:%02d:%02d\n", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
 
