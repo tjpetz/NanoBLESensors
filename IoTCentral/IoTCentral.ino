@@ -267,7 +267,11 @@ void loop() {
       BLE.disconnect();
       BLE.end();
 
-      LowPower.sleep(idleTime);
+      #ifdef _DEBUG_ 
+        delay(idleTime);      // delay to prevent USB from being closed
+      #else
+        LowPower.sleep(idleTime);
+      #endif
       
       // Restart BLE
       retryCounter = 0;
@@ -335,6 +339,9 @@ void initializeRTC() {
   // If we still have failed to get the time reset the board.
   if (ntpTime == 0) {
     DEBUG_PRINTF("Cannot get time from NTP so forcing a reset.\n");
+    // gracefully disconnect before rebooting
+    WiFi.disconnect();
+    WiFi.end();
     NVIC_SystemReset();
   }
 
