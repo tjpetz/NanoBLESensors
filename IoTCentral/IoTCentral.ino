@@ -95,7 +95,6 @@ typedef enum FSMStates {
     initializing,
     start_scan,
     scanning,
-    attempt_connection,
     connecting,
     connected,
     reading_measurements,
@@ -105,11 +104,10 @@ typedef enum FSMStates {
 } FSMState_t;
 
 #ifdef _DEBUG_
-char debugStateNames [10][32] = {
+char debugStateNames [9][32] = {
   "initializing", 
   "start_scan", 
   "scanning", 
-  "attempt_connection", 
   "connecting", 
   "connected", 
   "reading_measurements", 
@@ -127,6 +125,8 @@ const unsigned long idleTime = 15000;             // Time to spend in idle in mS
 
 unsigned long now = 0;
 unsigned long lastMeasureTime = 0;
+unsigned long scanStartTime = 0;
+unsigned long maxScanTime = 30000;              // Time to scan before going idle
 
 
 void setup() {
@@ -167,40 +167,26 @@ void loop() {
     case start_scan:
       
       BLE.scanForUuid(environmentServiceUUID);
-      lastMeasureTime = millis();
+      scanStartTime = millis();
       nextState = scanning;
       break;
   
     case scanning:
 
-      now = millis();
-      if (now - lastMeasureTime >= (3 * 1000)) {
-        lastMeasureTime = now;
-        nextState = attempt_connection;      // Time to try to connect.
-      }
-      break;
-
-    case attempt_connection:
-
       sensorPeripheral = BLE.available();
-
       digitalWrite(LED_BUILTIN, HIGH);
-      // Attempt to connect for 2 seconds
-      while (!sensorPeripheral && (millis() - lastMeasureTime <= 2000)) {
-
-        sensorPeripheral = BLE.available();
-        if (!sensorPeripheral) {
-          BLE.poll();  
-          delay(50);
-        }
-      }
-      digitalWrite(LED_BUILTIN, LOW);
 
       if (sensorPeripheral) {
+        digitalWrite(LED_BUILTIN, LOW);
         nextState = connecting;
-      } else {
+      } else if (millis() - scanStartTime <= maxScanTime) {
         nextState = scanning;
+      } else
+      {
+        digitalWrite(LED_BUILTIN, LOW);
+        nextState = idle;
       }
+      
       break;
 
     case connecting:
@@ -280,7 +266,8 @@ void loop() {
       // Turn off the radio and go to sleep
       BLE.disconnect();
       BLE.end();
-      delay(idleTime);
+
+      LowPower.sleep(idleTime);
       
       // Restart BLE
       retryCounter = 0;
