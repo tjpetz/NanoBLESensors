@@ -85,11 +85,13 @@ float currentPressure = 0.0;
 String currentLocationName;
 String connectedDeviceName;
 
-const int maxFailedConnections = 5;             // force a reset after this many failed connections.
-int failedConnectionsCounter = 0;               // counter to keep track of failed connections
+// Retry counters
+const int maxTries = 10;             
+int retryCounter = 0;               // counter to keep track of failed connections
+bool success = false;
 
 // State machine states
-typedef enum {
+typedef enum FSMStates {
     initializing,
     start_scan,
     scanning,
@@ -97,11 +99,13 @@ typedef enum {
     connecting,
     connected,
     reading_measurements,
-    sending_measurements
+    sending_measurements,
+    idle,
+    restart
 } FSMState_t;
 
 #ifdef _DEBUG_
-char debugStateNames [8][32] = {
+char debugStateNames [10][32] = {
   "initializing", 
   "start_scan", 
   "scanning", 
@@ -109,13 +113,17 @@ char debugStateNames [8][32] = {
   "connecting", 
   "connected", 
   "reading_measurements", 
-  "sending_measurements" 
+  "sending_measurements",
+  "idle",
+  "restart" 
 };
 #endif
 
 FSMState_t currentState = initializing;
 FSMState_t nextState = initializing;
 FSMState_t previousState = initializing;
+
+const unsigned long idleTime = 15000;             // Time to spend in idle in mS
 
 unsigned long now = 0;
 unsigned long lastMeasureTime = 0;
@@ -251,16 +259,51 @@ void loop() {
       
       delay(50);
 
-      sendMeasurementsToMQTT();
+      retryCounter = 0;
+      success = sendMeasurementsToMQTT();
 
-      // Restart BLE
-      if (!BLE.begin()) {
-        DEBUG_PRINTF("Failed to start BLE\n");
-      } else {
-        DEBUG_PRINTF("Restarted BLE\n");
+      while (!success && retryCounter < maxTries) {
+        delay(500);
+        ++retryCounter;
+        success = sendMeasurementsToMQTT();
       }
 
-      nextState = start_scan;
+     if (success) {
+        nextState = idle;
+      } else {
+        nextState = restart;
+      }
+      break;
+
+    case idle:
+
+      // Turn off the radio and go to sleep
+      BLE.disconnect();
+      BLE.end();
+      delay(idleTime);
+      
+      // Restart BLE
+      retryCounter = 0;
+      success = BLE.begin();
+      while (!success && retryCounter < maxTries) {
+        ++retryCounter;
+        delay(100);
+        success = BLE.begin();
+      }
+ 
+      if (success) {
+        nextState = start_scan;
+      } else {
+        DEBUG_PRINTF("Failed to restart BLE so rebooting!\n");
+        nextState = restart; 
+      }
+
+     break;
+
+    case restart:
+
+      DEBUG_PRINTF("Rebooting!\n");
+      NVIC_SystemReset();
       break;
   }
 
@@ -299,10 +342,14 @@ void initializeRTC() {
   while (ntpTime == 0 && tries < maxTries) {
     ntpTime = WiFi.getTime();
     tries++;
-    delay(3000);
+    delay(1500);
   }
 
-// TODO: handle the situation if no time is available.
+  // If we still have failed to get the time reset the board.
+  if (ntpTime == 0) {
+    DEBUG_PRINTF("Cannot get time from NTP so forcing a reset.\n");
+    NVIC_SystemReset();
+  }
 
   struct tm* t = gmtime(&ntpTime);    // convert Unix epoch time to tm struct format
   DEBUG_PRINTF("NTP Time = %04d-%02d-%02d %02d:%02d:%02d\n", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
@@ -380,8 +427,10 @@ void readMeasurements() {
 }
 
 
-void sendMeasurementsToMQTT() {
+bool sendMeasurementsToMQTT() {
   // We have a measurement so connect to WiFi and send it to the MQTT broker.
+  bool status = false;
+
   DEBUG_PRINTF("Attempting to send measurement\n");
 
   WiFi.setHostname(hostname);
@@ -414,11 +463,15 @@ void sendMeasurementsToMQTT() {
       delay(mqttTxDelay);
     }
     mqttClient.stop();
-    DEBUG_PRINTF("Disconnecting from Wifi\n");
+    status = true;
   } 
   else {
     DEBUG_PRINTF("Error/timeout connecting to WiFi: %d\n", WiFi.reasonCode());
   }
+
+  DEBUG_PRINTF("Disconnecting from Wifi\n");
   WiFi.disconnect();
   WiFi.end();
+
+  return(status);
 }
