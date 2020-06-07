@@ -6,6 +6,14 @@
  * and then stop the BLE connection and connect to WiFi.
  * 
  * History:
+ *  6 Jun 2020 - reworked the BLE scan process.  We don't start a new scan each loop.
+ *    Rather we continue with the current scan.  When we find a new device we stop
+ *    scanning.  TODO: if we do not find the Environment service after connection we
+ *    currently fail to correctly restart the scan.  Thus we enter an endless loop.
+ *    I'm looking at implementing a proper FSM to deal with this and other conditions.
+ *    Also broke out the route to send the measurements via WiFi to the MQTT server.
+ *    Retrieve the location setting from the sensor and added the location to the MQTT
+ *    message.
  *  4 Jun 2020 - update to use more generic name for the mqtt broker.
  *  31 May 2020 - After a few hours the board is unable to connect anymore to the BLE
  *    Sense.  Rebooting established reconnection.  Try adding a reset counter.  If after
@@ -70,6 +78,7 @@ bool updatedMeasurement = false;
 float currentTemperature = 0.0;
 float currentHumidity = 0.0;
 float currentPressure = 0.0;
+String currentLocationName;
 String connectedDeviceName;
 byte macAddress[6];               // MAC address of the Wifi which we'll use in reporting
 
@@ -79,6 +88,7 @@ const int maxFailedConnections = 5;             // force a reset after this many
 int failedConnectionsCounter = 0;               // counter to keep track of failed connections
 
 void setup() {
+  
   Serial.begin(115200);
   delay(2000);     // Give serial a moment to start
  
@@ -102,6 +112,10 @@ void setup() {
   now = millis();
   lastMeasureTime = now;
 
+  BLE.setConnectionInterval(8, 40);    // 10 - 50 mS connection interval
+
+  BLE.scanForUuid(environmentServiceUUID);
+
   digitalWrite(LED_BUILTIN, LOW);
 }
 
@@ -111,156 +125,140 @@ void loop() {
   if (now - lastMeasureTime >= (3 * 1000)) {
     lastMeasureTime = now;
 
-    DEBUG_PRINTF("Scanning for environmentService (%lu)\n", millis());
-    if (BLE.scanForUuid(environmentServiceUUID)) {
+    BLEDevice peripheral = BLE.available();
+
+    digitalWrite(LED_BUILTIN, HIGH);
+    // Attempt to connect for 2 seconds
+    while (!peripheral && (millis() - lastMeasureTime <= 2000)) {
+
+      peripheral = BLE.available();
+      if (!peripheral) {
+        BLE.poll();  
+        delay(50);
+      }
+    }
+    digitalWrite(LED_BUILTIN, LOW);
+
+    // Wait for connection
+    if(peripheral) {
+      DEBUG_PRINTF("=========================================================\n");
+      DEBUG_PRINTF("\tLocal Name: %s\n", peripheral.localName().c_str());
+      DEBUG_PRINTF("\tAddress: %s\n", peripheral.address().c_str());
+      DEBUG_PRINTF("\tRSSI: %d\n", peripheral.rssi());
+
+      connectedDeviceName = peripheral.localName();
       
-      BLEDevice peripheral = BLE.available();
-
-      if(peripheral) {
-        DEBUG_PRINTF("=========================================================\n");
-        DEBUG_PRINTF("\tLocal Name: %s\n", peripheral.localName().c_str());
-        DEBUG_PRINTF("\tAddress: %s\n", peripheral.address().c_str());
-        DEBUG_PRINTF("\tRSSI: %d\n", peripheral.rssi());
-
-        connectedDeviceName = peripheral.localName();
-        
-        BLE.stopScan();   // we have to stop scanning before we can connect to a peripheral
-        
-        #ifdef _DEBUG_
-        // print the advertised service UUIDs, if present
-        if (peripheral.hasAdvertisedServiceUuid()) {
-          DEBUG_PRINTF("Advertised Service UUIDs: ");
-          for (int i = 0; i < peripheral.advertisedServiceUuidCount(); i++) {
-            DEBUG_PRINTF("%s, ", peripheral.advertisedServiceUuid(i).c_str());
-          }
-          DEBUG_PRINTF("\n");
+      BLE.stopScan();   // we have to stop scanning before we can connect to a peripheral
+      
+      #ifdef _DEBUG_
+      // print the advertised service UUIDs, if present
+      if (peripheral.hasAdvertisedServiceUuid()) {
+        DEBUG_PRINTF("Advertised Service UUIDs: ");
+        for (int i = 0; i < peripheral.advertisedServiceUuidCount(); i++) {
+          DEBUG_PRINTF("%s, ", peripheral.advertisedServiceUuid(i).c_str());
         }
-        #endif
-        
-        if (peripheral.connect()) {
-          DEBUG_PRINTF("Connected.\n");
+        DEBUG_PRINTF("\n");
+      }
+      #endif
+      
+      if (peripheral.connect()) {
+        DEBUG_PRINTF("Connected to %s.\n", peripheral.localName().c_str());
 
-          // reset the failed connection counter
-          failedConnectionsCounter = 0;
+        // reset the failed connection counter
+        failedConnectionsCounter = 0;
 
-          if (peripheral.discoverService("181a")) {
-            DEBUG_PRINTF("Environment Service found\n");
+        if (peripheral.discoverService("181a")) {
+          DEBUG_PRINTF("Environment Service found\n");
 
-            // Read the humidity
-            BLECharacteristic humidityCharacteristic = peripheral.characteristic("2A6F");
-            if (humidityCharacteristic) {
-              uint16_t humidityRawValue;
-              humidityCharacteristic.readValue(humidityRawValue); 
-              currentHumidity = humidityRawValue / 100.0;
-              DEBUG_PRINTF("Humidity = %.2f %%\n", currentHumidity);
-            } else {
-              DEBUG_PRINTF("Cannot find humidity characteristic\n");
-            }
-
-            // Read the temperature
-            BLECharacteristic temperatureCharacteristic = peripheral.characteristic("2A6E");
-            if (temperatureCharacteristic) {
-              int16_t temperatureRawValue;
-              temperatureCharacteristic.readValue(temperatureRawValue);
-              currentTemperature = temperatureRawValue / 100.0;
-              DEBUG_PRINTF("Temperature = %.2f C\n", currentTemperature);
-            } else {
-              DEBUG_PRINTF("Cannot find temperature characteristic\n");
-            }
-
-            // Read the pressure
-            BLECharacteristic pressureCharacteristic = peripheral.characteristic("2A6D");
-            if (pressureCharacteristic) {
-              uint32_t pressureRawValue;
-              pressureCharacteristic.readValue(pressureRawValue);
-              currentPressure = pressureRawValue * 0.00001450; // convert to PSI
-              DEBUG_PRINTF("Pressure = %.2f PSI\n", currentPressure);
-            } else {
-              DEBUG_PRINTF("Cannot find pressure characteristic\n");
-            }
-
-            updatedMeasurement = true;    // We have a new measurement
-    
+          // Read the humidity
+          BLECharacteristic humidityCharacteristic = peripheral.characteristic("2A6F");
+          if (humidityCharacteristic) {
+            uint16_t humidityRawValue;
+            humidityCharacteristic.readValue(humidityRawValue); 
+            currentHumidity = humidityRawValue / 100.0;
+            DEBUG_PRINTF("Humidity = %.2f %%\n", currentHumidity);
           } else {
-            DEBUG_PRINTF("Environment Service not found\n");
+            DEBUG_PRINTF("Cannot find humidity characteristic\n");
           }
-          // disconnect so we can start a new scan.
-          peripheral.disconnect();
+
+          // Read the temperature
+          BLECharacteristic temperatureCharacteristic = peripheral.characteristic("2A6E");
+          if (temperatureCharacteristic) {
+            int16_t temperatureRawValue;
+            temperatureCharacteristic.readValue(temperatureRawValue);
+            currentTemperature = temperatureRawValue / 100.0;
+            DEBUG_PRINTF("Temperature = %.2f C\n", currentTemperature);
+          } else {
+            DEBUG_PRINTF("Cannot find temperature characteristic\n");
+          }
+
+          // Read the pressure
+          BLECharacteristic pressureCharacteristic = peripheral.characteristic("2A6D");
+          if (pressureCharacteristic) {
+            uint32_t pressureRawValue;
+            pressureCharacteristic.readValue(pressureRawValue);
+            currentPressure = pressureRawValue * 0.00001450; // convert to PSI
+            DEBUG_PRINTF("Pressure = %.2f PSI\n", currentPressure);
+          } else {
+            DEBUG_PRINTF("Cannot find pressure characteristic\n");
+          }
+
+          // Read the location
+          BLECharacteristic locationNameCharacteristic = peripheral.characteristic("2AB5");
+          if (locationNameCharacteristic) {
+            char buff[255];
+            memset(buff, 0, sizeof(buff));    // zero out the buffer.
+            locationNameCharacteristic.readValue(buff, sizeof(buff));
+            currentLocationName = buff;
+            DEBUG_PRINTF("Location Name = %s\n", currentLocationName.c_str());
+          } else {
+            DEBUG_PRINTF("Cannot find locationName characteristic\n");
+          }
+          updatedMeasurement = true;    // We have a new measurement
+  
         } else {
-          DEBUG_PRINTF("Failed to connect.\n");
+          DEBUG_PRINTF("Environment Service not found\n");
         }
-     } else {
-        DEBUG_PRINTF("Peripheral not available.\n");
+        // disconnect so we can start a new scan.
+        peripheral.disconnect();
+      } else {
+        DEBUG_PRINTF("Failed to connect.\n");
       }
     } else {
-      if (failedConnectionsCounter >= maxFailedConnections) {
-        // Too many failures try a reset.
-        DEBUG_PRINTF("Forcing a reset due to too many failed scans.\n");
-        NVIC_SystemReset();
-      } else {
-        ++failedConnectionsCounter;
-      }
+        DEBUG_PRINTF("Peripheral not available.\n");
+    }
+    // } else {
+    //   if (failedConnectionsCounter >= maxFailedConnections) {
+    //     // Too many failures try a reset.
+    //     DEBUG_PRINTF("Forcing a reset due to too many failed scans.\n");
+    //     NVIC_SystemReset();
+    //   } else {
+    //     ++failedConnectionsCounter;
+    //   }
     }
 
-    if (updatedMeasurement) {
-      // disconnect and end BLE before starting the WiFi
-      BLE.disconnect();
-      BLE.end();
-      
-      delay(50);
-
-      // We have a measurement so connect to WiFi and send it to the MQTT broker.
-      DEBUG_PRINTF("Attempting to send measurement\n");
-
-      WiFi.setHostname(hostname);
-      WiFi.setTimeout(45 * 1000);    // 45 sec connection timeout
-      if (WiFi.begin(ssid, pass) == WL_CONNECTED) {
+  if (updatedMeasurement) {
+    // disconnect and end BLE before starting the WiFi
+    BLE.disconnect();
+    BLE.end();
     
-        DEBUG_PRINTF("Attempting to connect to the MQTT broker: %s\n", broker);
-      
-        if (!mqttClient.connect(broker, port)) {
-          DEBUG_PRINTF("MQTT connection failed! Error code = %d\n", mqttClient.connectError());
-        } else {
-          DEBUG_PRINTF("You're connected to the MQTT broker!\n");
+    delay(50);
 
-          char topic[MAX_TOPIC_LENGTH];
+    sendMeasurementsToMQTT();
 
-          snprintf(topic, sizeof(topic), "%s/%s", topicRoot, connectedDeviceName.c_str());
-
-          DEBUG_PRINTF("Topic = %s\n", topic);
-          mqttClient.beginMessage(topic);
-          char dateTime[20];
-          snprintf(dateTime, sizeof(dateTime), "%04d-%02d-%02dT%02d:%02d:%02d", rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
-          DEBUG_PRINTF("Sample Time = %s\n", dateTime);
-          char msg[255];
-          snprintf(msg, sizeof(msg), "{ \"sensor\": \"%s\", \"sampleTime\": \"%s\", \"temperature\": %.2f, \"humidity\": %.2f, \"pressure\": %.2f }", connectedDeviceName.c_str(), dateTime, currentTemperature, currentHumidity, currentPressure);
-          DEBUG_PRINTF("Message = %s\n", msg);
-          mqttClient.print(msg);
-          mqttClient.endMessage();
-          delay(mqttTxDelay);
-        }
-        
-        DEBUG_PRINTF("Disconnecting from Wifi\n");
-        WiFi.disconnect();
-        WiFi.end();
-      } else {
-        DEBUG_PRINTF("Error/timeout connecting to WiFi: %d\n", WiFi.reasonCode());
-        WiFi.disconnect();
-        WiFi.end();
-      }
-
-      // Restart BLE
-      if (!BLE.begin()) {
-        DEBUG_PRINTF("Failed to start BLE\n");
-      } else {
-        DEBUG_PRINTF("Restarted BLE\n");
-      }
-      updatedMeasurement = false;
+    // Restart BLE
+    if (!BLE.begin()) {
+      DEBUG_PRINTF("Failed to start BLE\n");
+    } else {
+      DEBUG_PRINTF("Restarted BLE\n");
     }
-
-    delay(50);     // give things a momemnt to start
+    updatedMeasurement = false;
+    BLE.scanForUuid(environmentServiceUUID);
   }
- }
+
+  delay(50);
+
+}
 
 // Initialize the RTC by calling NTP and setting the initial time in the RTC
 void initializeRTC() {
@@ -310,8 +308,50 @@ void initializeRTC() {
   }
 
   mqttClient.stop();
-  // delay(mqttTxDelay);
    
   WiFi.disconnect();
   WiFi.end(); 
+}
+
+void sendMeasurementsToMQTT() {
+  // We have a measurement so connect to WiFi and send it to the MQTT broker.
+  DEBUG_PRINTF("Attempting to send measurement\n");
+
+  WiFi.setHostname(hostname);
+  WiFi.setTimeout(45 * 1000);    // 45 sec connection timeout
+  if (WiFi.begin(ssid, pass) == WL_CONNECTED) {
+
+    DEBUG_PRINTF("Attempting to connect to the MQTT broker: %s\n", broker);
+  
+    mqttClient.setConnectionTimeout(4000);
+    if (!mqttClient.connect(broker, port)) {
+      DEBUG_PRINTF("MQTT connection failed! Error code = %d\n", mqttClient.connectError());
+    } else {
+      DEBUG_PRINTF("You're connected to the MQTT broker!\n");
+
+      char topic[MAX_TOPIC_LENGTH];
+
+      snprintf(topic, sizeof(topic), "%s/%s", topicRoot, connectedDeviceName.c_str());
+
+      DEBUG_PRINTF("Topic = %s\n", topic);
+      mqttClient.beginMessage(topic);
+      char dateTime[20];
+      snprintf(dateTime, sizeof(dateTime), "%04d-%02d-%02dT%02d:%02d:%02d", rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
+      DEBUG_PRINTF("Sample Time = %s\n", dateTime);
+      char msg[255];
+      snprintf(msg, sizeof(msg), "{ \"sensor\": \"%s\", \"location\": \"%s\", \"sampleTime\": \"%s\", \"temperature\": %.2f, \"humidity\": %.2f, \"pressure\": %.2f }", 
+        connectedDeviceName.c_str(), currentLocationName.c_str(), dateTime, currentTemperature, currentHumidity, currentPressure);
+      DEBUG_PRINTF("Message = %s\n", msg);
+      mqttClient.print(msg);
+      mqttClient.endMessage();
+      delay(mqttTxDelay);
+    }
+    mqttClient.stop();
+    DEBUG_PRINTF("Disconnecting from Wifi\n");
+  } 
+  else {
+    DEBUG_PRINTF("Error/timeout connecting to WiFi: %d\n", WiFi.reasonCode());
+  }
+  WiFi.disconnect();
+  WiFi.end();
 }

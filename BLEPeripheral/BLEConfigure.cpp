@@ -17,6 +17,7 @@ extern String sensorName;
 extern String sensorLocation;
 extern uint16_t humidityGreenLimit;
 extern uint16_t humidityAmberLimit;
+extern BLEStringCharacteristic locationNameCharacteristic;
 
 extern const flash_config_t flashConfig;
 
@@ -46,7 +47,6 @@ void sensorName_Written(BLEDevice central, BLECharacteristic characteristic) {
   DEBUG_PRINTF("configService.sensorName written: %s\n", config_sensorName.value().c_str());
   if (!configIsLocked) {
     sensorName = config_sensorName.value();
-    BLE.setDeviceName(config_sensorName.value().c_str());
   }
 }
 
@@ -54,6 +54,7 @@ void sensorLocation_Written(BLEDevice central, BLECharacteristic characteristic)
   DEBUG_PRINTF("configService.sensorLocation written: %s\n", config_sensorLocation.value().c_str());
   if (!configIsLocked) {
     sensorLocation = config_sensorLocation.value();
+    locationNameCharacteristic.writeValue(sensorLocation);
   }
 }
 
@@ -96,7 +97,6 @@ void config_configService() {
 
   config_sensorName.addDescriptor(config_sensorNameDescriptor);
   configService.addCharacteristic(config_sensorName);
-  BLE.setDeviceName(sensorName.c_str());
   config_sensorName.writeValue(sensorName);
   config_sensorName.setEventHandler(BLEWritten, sensorName_Written);
 

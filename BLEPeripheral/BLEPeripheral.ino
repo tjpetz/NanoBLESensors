@@ -41,6 +41,9 @@ extern const flash_config_t flashConfig __attribute__ ((aligned(0x1000))) =
 // BLE Environment Service
 BLEService environmentService("181A");
 
+// BLE Location Name
+BLEStringCharacteristic locationNameCharacteristic("2AB5", BLERead | BLENotify, 128);
+
 // BLE Humidity and Temperarture Characterists
 BLEUnsignedIntCharacteristic humidityCharacteristic("2A6F", BLERead | BLENotify);  // standard 16-bit UUID and remote client may read.
 BLEIntCharacteristic temperatureCharacteristic("2A6E", BLERead | BLENotify | BLEBroadcast);  // standard UUID for temp characteristic in C 0.01
@@ -51,6 +54,9 @@ uint16_t oldHumidity = 0;   // last humidity level
 int16_t oldTemperature = 0; // last temperature
 uint32_t oldPressure = 0;   // last pressure
 long previousMillis = 0;    // last time the environment was checked (mS)
+
+// save the name of the sensor so we can detect a change in the disconnect hander.
+String oldSensorName;
 
 // Use the onboard LEDs to signal humidity in range
 rgbLED led;
@@ -96,18 +102,20 @@ void setup() {
   DEBUG_PRINTF("humidityAmberLimit = %d\n", humidityAmberLimit);
   DEBUG_PRINTF("flash address = 0x%08x\n", (unsigned int)&flashConfig);
   DEBUG_PRINTF("NRF_NVMC->READY = 0x%04x\n", NRF_NVMC->READY);
-  
-  // BLE.setConnectionInterval(0x0006, 0x0c80);    // 7.5 ms to 4 s
-  
+    
   // Configure the BLE settings
   BLE.setLocalName(sensorName.c_str());
-  BLE.setDeviceName(sensorName.c_str());
+  oldSensorName = sensorName;
   environmentService.addCharacteristic(humidityCharacteristic);
   environmentService.addCharacteristic(temperatureCharacteristic);
   environmentService.addCharacteristic(pressureCharacteristic);
+  environmentService.addCharacteristic(locationNameCharacteristic);
+
+  // Set the initial values
   humidityCharacteristic.writeValue((uint16_t)(HTS.readHumidity() * 100));
   temperatureCharacteristic.writeValue((int16_t)(HTS.readTemperature() * 100));
   pressureCharacteristic.writeValue((uint32_t)(BARO.readPressure() * 10000));
+  locationNameCharacteristic.writeValue(sensorLocation);
 
   // broadcast the temperature in the advertisement
   temperatureCharacteristic.broadcast();
@@ -121,8 +129,9 @@ void setup() {
   BLE.addService(configService);
   BLE.addService(environmentService);
 
+  BLE.setAppearance(5696);      // Generic environmental sensor
   BLE.setAdvertisedService(environmentService);
-  BLE.setAdvertisingInterval(315);    
+  BLE.setAdvertisingInterval(400);    // Adversive every 250 mS = (400 * 0.625ms)
   BLE.advertise();
 
   DEBUG_PRINTF("BLE initialized, waiting for connections...\n");
@@ -180,11 +189,18 @@ void loop() {
 void on_BLECentralConnected(BLEDevice central) {
   DEBUG_PRINTF("Connection from: %s, rssi = %d, at %lu\n", central.address().c_str(), central.rssi(), millis());
   digitalWrite(LED_BUILTIN, HIGH); 
-  BLE.advertise(); 
+  BLE.stopAdvertise(); // Don't advertise while connected.
 }
 
 void on_BLECentralDisconnected(BLEDevice central) {
   DEBUG_PRINTF("Disconnected from: %s, at %lu\n", central.address().c_str(), millis());
-  digitalWrite(LED_BUILTIN, LOW); 
-  BLE.advertise(); 
+  digitalWrite(LED_BUILTIN, LOW);
+  if (oldSensorName != sensorName) {
+    DEBUG_PRINTF("Setting new sensor name = %s\n", sensorName.c_str());
+    // the sensor name has changed, we need to update the name while the client is Disconnected
+    // and before we restart advertising.
+    BLE.setLocalName(sensorName.c_str());
+    oldSensorName = sensorName;
+  } 
+  BLE.advertise();  // Resume advertising.
 }
