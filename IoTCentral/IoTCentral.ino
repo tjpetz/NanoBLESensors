@@ -6,6 +6,10 @@
  * and then stop the BLE connection and connect to WiFi.
  * 
  * History:
+ *  7 Jun 2020 - refactored to be state machine based.  This is working right now but
+ *    certainly could use some optimization in the states.  There are more than are
+ *    strictly required.  E.g. I think we can collapse the scanning and attempt_connection
+ *    states.  Also we can add an idle state for long term sleep.
  *  6 Jun 2020 - reworked the BLE scan process.  We don't start a new scan each loop.
  *    Rather we continue with the current scan.  When we find a new device we stop
  *    scanning.  TODO: if we do not find the Environment service after connection we
