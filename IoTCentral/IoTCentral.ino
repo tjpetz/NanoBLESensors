@@ -6,6 +6,10 @@
  * and then stop the BLE connection and connect to WiFi.
  * 
  * History:
+ *  7 Jun 2020 - refactored to be state machine based.  This is working right now but
+ *    certainly could use some optimization in the states.  There are more than are
+ *    strictly required.  E.g. I think we can collapse the scanning and attempt_connection
+ *    states.  Also we can add an idle state for long term sleep.
  *  6 Jun 2020 - reworked the BLE scan process.  We don't start a new scan each loop.
  *    Rather we continue with the current scan.  When we find a new device we stop
  *    scanning.  TODO: if we do not find the Environment service after connection we
@@ -54,38 +58,76 @@ char pass[] = SECRET_PASS;    // your network password (use for WPA, or use as k
 #define _DEBUG_
 #include "Debug.h"
 
+RTCZero rtc;                            // Real Time Clock so we can time stamp data
+
+// WiFi and MQTT
 WiFiClient wifiClient;                  // Our wifi client
 MqttClient mqttClient(wifiClient);      // Our MQTT client
-RTCZero rtc;                            // Real Time Clock so we can time stamp data
-int wifiStatus = WL_IDLE_STATUS;        // Keep track of the WiFi status
-
-const int ninaRebootDelay = 3000;       // Time (mS) between ending either Wifi or BLE and starting the other
 const int mqttTxDelay = 2500;           // Time (mS) between the last call to mqtt and turning off the wifi.
-const unsigned long resetEverymS = 15 * 60 * 1000;      // Reset every 15 minutes to work around instabilities.
-unsigned long now = 0;
-unsigned long lastMeasureTime = 0;
-
 const char broker[] = "mqtt.bb.tjpetz.com";
 const int port = 1883;
-
 const char topicRoot[] = "tjpetz.com/sensor";
 const unsigned int MAX_TOPIC_LENGTH = 255;
-
 const char hostname[] = "iot_central_001";
+byte macAddress[6];               // MAC address of the Wifi which we'll use in reporting
 
+// The Nano 33 BLE Sense sensor and it's characteristics.
+BLEDevice sensorPeripheral;
+const char environmentServiceUUID[] = "181A";       // the standard UUID for the environment service
+BLECharacteristic humidityCharacteristic;
+BLECharacteristic temperatureCharacteristic;
+BLECharacteristic pressureCharacteristic;
+BLECharacteristic locationNameCharacteristic;
 
-bool updatedMeasurement = false;
 float currentTemperature = 0.0;
 float currentHumidity = 0.0;
 float currentPressure = 0.0;
 String currentLocationName;
 String connectedDeviceName;
-byte macAddress[6];               // MAC address of the Wifi which we'll use in reporting
 
-const char environmentServiceUUID[] = "181A";       // the standard UUID for the environment service
+// Retry counters
+const int maxTries = 10;             
+int retryCounter = 0;               // counter to keep track of failed connections
+bool success = false;
 
-const int maxFailedConnections = 5;             // force a reset after this many failed connections.
-int failedConnectionsCounter = 0;               // counter to keep track of failed connections
+// State machine states
+typedef enum FSMStates {
+    initializing,
+    start_scan,
+    scanning,
+    connecting,
+    connected,
+    reading_measurements,
+    sending_measurements,
+    idle,
+    restart
+} FSMState_t;
+
+#ifdef _DEBUG_
+char debugStateNames [9][32] = {
+  "initializing", 
+  "start_scan", 
+  "scanning", 
+  "connecting", 
+  "connected", 
+  "reading_measurements", 
+  "sending_measurements",
+  "idle",
+  "restart" 
+};
+#endif
+
+FSMState_t currentState = initializing;
+FSMState_t nextState = initializing;
+FSMState_t previousState = initializing;
+
+const unsigned long idleTime = 15000;             // Time to spend in idle in mS
+
+unsigned long now = 0;
+unsigned long lastMeasureTime = 0;
+unsigned long scanStartTime = 0;
+unsigned long maxScanTime = 30000;              // Time to scan before going idle
+
 
 void setup() {
   
@@ -112,152 +154,162 @@ void setup() {
   now = millis();
   lastMeasureTime = now;
 
-  BLE.setConnectionInterval(8, 40);    // 10 - 50 mS connection interval
-
-  BLE.scanForUuid(environmentServiceUUID);
+  currentState = start_scan;
+  previousState = initializing;
 
   digitalWrite(LED_BUILTIN, LOW);
 }
 
 void loop() {
 
-  now = millis();
-  if (now - lastMeasureTime >= (3 * 1000)) {
-    lastMeasureTime = now;
+  switch (currentState) {
 
-    BLEDevice peripheral = BLE.available();
+    case start_scan:
+      
+      BLE.scanForUuid(environmentServiceUUID);
+      scanStartTime = millis();
+      nextState = scanning;
+      break;
+  
+    case scanning:
 
-    digitalWrite(LED_BUILTIN, HIGH);
-    // Attempt to connect for 2 seconds
-    while (!peripheral && (millis() - lastMeasureTime <= 2000)) {
+      sensorPeripheral = BLE.available();
+      digitalWrite(LED_BUILTIN, HIGH);
 
-      peripheral = BLE.available();
-      if (!peripheral) {
-        BLE.poll();  
-        delay(50);
+      if (sensorPeripheral) {
+        digitalWrite(LED_BUILTIN, LOW);
+        nextState = connecting;
+      } else if (millis() - scanStartTime <= maxScanTime) {
+        nextState = scanning;
+      } else
+      {
+        digitalWrite(LED_BUILTIN, LOW);
+        nextState = idle;
       }
-    }
-    digitalWrite(LED_BUILTIN, LOW);
+      
+      break;
 
-    // Wait for connection
-    if(peripheral) {
+    case connecting:
+
       DEBUG_PRINTF("=========================================================\n");
-      DEBUG_PRINTF("\tLocal Name: %s\n", peripheral.localName().c_str());
-      DEBUG_PRINTF("\tAddress: %s\n", peripheral.address().c_str());
-      DEBUG_PRINTF("\tRSSI: %d\n", peripheral.rssi());
+      DEBUG_PRINTF("\tLocal Name: %s\n", sensorPeripheral.localName().c_str());
+      DEBUG_PRINTF("\tAddress: %s\n", sensorPeripheral.address().c_str());
+      DEBUG_PRINTF("\tRSSI: %d\n", sensorPeripheral.rssi());
 
-      connectedDeviceName = peripheral.localName();
+      connectedDeviceName = sensorPeripheral.localName();
       
       BLE.stopScan();   // we have to stop scanning before we can connect to a peripheral
       
       #ifdef _DEBUG_
       // print the advertised service UUIDs, if present
-      if (peripheral.hasAdvertisedServiceUuid()) {
+      if (sensorPeripheral.hasAdvertisedServiceUuid()) {
         DEBUG_PRINTF("Advertised Service UUIDs: ");
-        for (int i = 0; i < peripheral.advertisedServiceUuidCount(); i++) {
-          DEBUG_PRINTF("%s, ", peripheral.advertisedServiceUuid(i).c_str());
+        for (int i = 0; i < sensorPeripheral.advertisedServiceUuidCount(); i++) {
+          DEBUG_PRINTF("%s, ", sensorPeripheral.advertisedServiceUuid(i).c_str());
         }
         DEBUG_PRINTF("\n");
       }
       #endif
-      
-      if (peripheral.connect()) {
-        DEBUG_PRINTF("Connected to %s.\n", peripheral.localName().c_str());
-
-        // reset the failed connection counter
-        failedConnectionsCounter = 0;
-
-        if (peripheral.discoverService("181a")) {
-          DEBUG_PRINTF("Environment Service found\n");
-
-          // Read the humidity
-          BLECharacteristic humidityCharacteristic = peripheral.characteristic("2A6F");
-          if (humidityCharacteristic) {
-            uint16_t humidityRawValue;
-            humidityCharacteristic.readValue(humidityRawValue); 
-            currentHumidity = humidityRawValue / 100.0;
-            DEBUG_PRINTF("Humidity = %.2f %%\n", currentHumidity);
-          } else {
-            DEBUG_PRINTF("Cannot find humidity characteristic\n");
-          }
-
-          // Read the temperature
-          BLECharacteristic temperatureCharacteristic = peripheral.characteristic("2A6E");
-          if (temperatureCharacteristic) {
-            int16_t temperatureRawValue;
-            temperatureCharacteristic.readValue(temperatureRawValue);
-            currentTemperature = temperatureRawValue / 100.0;
-            DEBUG_PRINTF("Temperature = %.2f C\n", currentTemperature);
-          } else {
-            DEBUG_PRINTF("Cannot find temperature characteristic\n");
-          }
-
-          // Read the pressure
-          BLECharacteristic pressureCharacteristic = peripheral.characteristic("2A6D");
-          if (pressureCharacteristic) {
-            uint32_t pressureRawValue;
-            pressureCharacteristic.readValue(pressureRawValue);
-            currentPressure = pressureRawValue * 0.00001450; // convert to PSI
-            DEBUG_PRINTF("Pressure = %.2f PSI\n", currentPressure);
-          } else {
-            DEBUG_PRINTF("Cannot find pressure characteristic\n");
-          }
-
-          // Read the location
-          BLECharacteristic locationNameCharacteristic = peripheral.characteristic("2AB5");
-          if (locationNameCharacteristic) {
-            char buff[255];
-            memset(buff, 0, sizeof(buff));    // zero out the buffer.
-            locationNameCharacteristic.readValue(buff, sizeof(buff));
-            currentLocationName = buff;
-            DEBUG_PRINTF("Location Name = %s\n", currentLocationName.c_str());
-          } else {
-            DEBUG_PRINTF("Cannot find locationName characteristic\n");
-          }
-          updatedMeasurement = true;    // We have a new measurement
   
-        } else {
-          DEBUG_PRINTF("Environment Service not found\n");
-        }
-        // disconnect so we can start a new scan.
-        peripheral.disconnect();
+      if (sensorPeripheral.connect()) {
+        nextState = connected;
       } else {
-        DEBUG_PRINTF("Failed to connect.\n");
+        nextState = start_scan;       // Restart the scan if we failed to connect.
       }
-    } else {
-        DEBUG_PRINTF("Peripheral not available.\n");
-    }
-    // } else {
-    //   if (failedConnectionsCounter >= maxFailedConnections) {
-    //     // Too many failures try a reset.
-    //     DEBUG_PRINTF("Forcing a reset due to too many failed scans.\n");
-    //     NVIC_SystemReset();
-    //   } else {
-    //     ++failedConnectionsCounter;
-    //   }
-    }
+      break;
 
-  if (updatedMeasurement) {
-    // disconnect and end BLE before starting the WiFi
-    BLE.disconnect();
-    BLE.end();
-    
-    delay(50);
+    case connected:
 
-    sendMeasurementsToMQTT();
+      if (sensorPeripheral.discoverService("181a")) {
+        nextState = reading_measurements;
+      } else {
+        nextState = start_scan;       // The environment service is missing so start the scan again.
+      }
+      break;
 
-    // Restart BLE
-    if (!BLE.begin()) {
-      DEBUG_PRINTF("Failed to start BLE\n");
-    } else {
-      DEBUG_PRINTF("Restarted BLE\n");
-    }
-    updatedMeasurement = false;
-    BLE.scanForUuid(environmentServiceUUID);
+    case reading_measurements:
+
+      readMeasurements();
+
+      // disconnect as we're finished reading.
+      sensorPeripheral.disconnect();
+
+      nextState = sending_measurements;
+      break;
+
+    case sending_measurements:
+
+      // disconnect and end BLE before starting the WiFi
+      BLE.disconnect();
+      BLE.end();
+      
+      delay(50);
+
+      retryCounter = 0;
+      success = sendMeasurementsToMQTT();
+
+      while (!success && retryCounter < maxTries) {
+        delay(500);
+        ++retryCounter;
+        success = sendMeasurementsToMQTT();
+      }
+
+     if (success) {
+        nextState = idle;
+      } else {
+        nextState = restart;
+      }
+      break;
+
+    case idle:
+
+      // Turn off the radio and go to sleep
+      BLE.disconnect();
+      BLE.end();
+
+      #ifdef _DEBUG_ 
+        delay(idleTime);      // delay to prevent USB from being closed
+      #else
+        LowPower.sleep(idleTime);
+      #endif
+      
+      // Restart BLE
+      retryCounter = 0;
+      success = BLE.begin();
+      while (!success && retryCounter < maxTries) {
+        ++retryCounter;
+        delay(100);
+        success = BLE.begin();
+      }
+ 
+      if (success) {
+        nextState = start_scan;
+      } else {
+        DEBUG_PRINTF("Failed to restart BLE so rebooting!\n");
+        nextState = restart; 
+      }
+
+     break;
+
+    case restart:
+
+      DEBUG_PRINTF("Rebooting!\n");
+      NVIC_SystemReset();
+      break;
   }
 
-  delay(50);
+  #ifdef _DEBUG_
+  if (nextState != currentState) {
+    DEBUG_PRINTF("Changing state from %s(%d) to %s(%d)\n", 
+      debugStateNames[currentState], currentState, 
+      debugStateNames[nextState], nextState);
+  }
+  #endif
 
+  previousState = currentState;
+  currentState = nextState;
+  delay(50);
+  BLE.poll();
 }
 
 // Initialize the RTC by calling NTP and setting the initial time in the RTC
@@ -281,10 +333,17 @@ void initializeRTC() {
   while (ntpTime == 0 && tries < maxTries) {
     ntpTime = WiFi.getTime();
     tries++;
-    delay(3000);
+    delay(1500);
   }
 
-// TODO: handle the situation if no time is available.
+  // If we still have failed to get the time reset the board.
+  if (ntpTime == 0) {
+    DEBUG_PRINTF("Cannot get time from NTP so forcing a reset.\n");
+    // gracefully disconnect before rebooting
+    WiFi.disconnect();
+    WiFi.end();
+    NVIC_SystemReset();
+  }
 
   struct tm* t = gmtime(&ntpTime);    // convert Unix epoch time to tm struct format
   DEBUG_PRINTF("NTP Time = %04d-%02d-%02d %02d:%02d:%02d\n", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
@@ -313,8 +372,59 @@ void initializeRTC() {
   WiFi.end(); 
 }
 
-void sendMeasurementsToMQTT() {
+
+void readMeasurements() {
+    // Read the humidity
+  humidityCharacteristic = sensorPeripheral.characteristic("2A6F");
+  if (humidityCharacteristic) {
+    uint16_t humidityRawValue;
+    humidityCharacteristic.readValue(humidityRawValue); 
+    currentHumidity = humidityRawValue / 100.0;
+    DEBUG_PRINTF("Humidity = %.2f %%\n", currentHumidity);
+  } else {
+    DEBUG_PRINTF("Cannot find humidity characteristic\n");
+  }
+
+  // Read the temperature
+  temperatureCharacteristic = sensorPeripheral.characteristic("2A6E");
+  if (temperatureCharacteristic) {
+    int16_t temperatureRawValue;
+    temperatureCharacteristic.readValue(temperatureRawValue);
+    currentTemperature = temperatureRawValue / 100.0;
+    DEBUG_PRINTF("Temperature = %.2f C\n", currentTemperature);
+  } else {
+    DEBUG_PRINTF("Cannot find temperature characteristic\n");
+  }
+
+  // Read the pressure
+  pressureCharacteristic = sensorPeripheral.characteristic("2A6D");
+  if (pressureCharacteristic) {
+    uint32_t pressureRawValue;
+    pressureCharacteristic.readValue(pressureRawValue);
+    currentPressure = pressureRawValue * 0.00001450; // convert to PSI
+    DEBUG_PRINTF("Pressure = %.2f PSI\n", currentPressure);
+  } else {
+    DEBUG_PRINTF("Cannot find pressure characteristic\n");
+  }
+
+  // Read the location
+  locationNameCharacteristic = sensorPeripheral.characteristic("2AB5");
+  if (locationNameCharacteristic) {
+    char buff[255];
+    memset(buff, 0, sizeof(buff));    // zero out the buffer.
+    locationNameCharacteristic.readValue(buff, sizeof(buff));
+    currentLocationName = buff;
+    DEBUG_PRINTF("Location Name = %s\n", currentLocationName.c_str());
+  } else {
+    DEBUG_PRINTF("Cannot find locationName characteristic\n");
+  }
+}
+
+
+bool sendMeasurementsToMQTT() {
   // We have a measurement so connect to WiFi and send it to the MQTT broker.
+  bool status = false;
+
   DEBUG_PRINTF("Attempting to send measurement\n");
 
   WiFi.setHostname(hostname);
@@ -347,11 +457,15 @@ void sendMeasurementsToMQTT() {
       delay(mqttTxDelay);
     }
     mqttClient.stop();
-    DEBUG_PRINTF("Disconnecting from Wifi\n");
+    status = true;
   } 
   else {
     DEBUG_PRINTF("Error/timeout connecting to WiFi: %d\n", WiFi.reasonCode());
   }
+
+  DEBUG_PRINTF("Disconnecting from Wifi\n");
   WiFi.disconnect();
   WiFi.end();
+
+  return(status);
 }
