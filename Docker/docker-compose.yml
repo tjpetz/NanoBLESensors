@@ -23,7 +23,7 @@ services:
      - PRE_CREATE_DB="dbname"
     volumes:
      - ./volumes/influxdb:/var/lib/influxdb
-     - ./influxdb_backup:/var/lib/influxdb/backup
+     - ./volumes/influxdb_backup:/var/lib/influxdb/backup
     restart: unless-stopped
   grafana:
     container_name: grafana
@@ -49,7 +49,9 @@ services:
      - "1883:1883"
      - "9001:9001"
     volumes:
-     - ./volumes/mosquitto:/mosquitto
+     - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+     - ./volumes/mosquitto/data:/mosquitto/data
+     - ./volumes/mosquitto/log:/mosquitto/log
     restart: unless-stopped
   nodered:
     container_name: nodered
@@ -58,8 +60,6 @@ services:
      - "1880:1880"
     volumes:
      - ./volumes/nodered:/data
-    depends_on:
-     - influx
     restart: unless-stopped
   telegraf:
     container_name: telegraf
