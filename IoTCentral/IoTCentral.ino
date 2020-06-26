@@ -49,6 +49,7 @@
 #include <RTCZero.h>
 #include <time.h>
 #include <ArduinoLowPower.h>
+#include <Adafruit_SleepyDog.h>
 
 #include "arduino_secret.h"
 ///////please enter your sensitive data in the Secret tab/arduino_secrets.h
@@ -79,6 +80,7 @@ BLECharacteristic temperatureCharacteristic;
 BLECharacteristic pressureCharacteristic;
 BLECharacteristic locationNameCharacteristic;
 
+// Current state measurements
 float currentTemperature = 0.0;
 float currentHumidity = 0.0;
 float currentPressure = 0.0;
@@ -122,6 +124,7 @@ FSMState_t nextState = initializing;
 FSMState_t previousState = initializing;
 
 const unsigned long idleTime = 15000;             // Time to spend in idle in mS
+const int watchdogTimeout = 60000;
 
 unsigned long now = 0;
 unsigned long lastMeasureTime = 0;
@@ -144,7 +147,10 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
 
+  Watchdog.enable(watchdogTimeout);
+
   initializeRTC();
+  Watchdog.reset();
 
   DEBUG_PRINTF("Starting BLE\n");
   while (!BLE.begin()) {
@@ -174,6 +180,8 @@ void loop() {
   
     case scanning:
 
+      BLE.poll();
+
       sensorPeripheral = BLE.available();
       digitalWrite(LED_BUILTIN, HIGH);
 
@@ -191,6 +199,8 @@ void loop() {
       break;
 
     case connecting:
+
+      BLE.poll();
 
       DEBUG_PRINTF("=========================================================\n");
       DEBUG_PRINTF("\tLocal Name: %s\n", sensorPeripheral.localName().c_str());
@@ -221,6 +231,8 @@ void loop() {
 
     case connected:
 
+      BLE.poll();
+
       if (sensorPeripheral.discoverService("181a")) {
         nextState = reading_measurements;
       } else {
@@ -229,6 +241,8 @@ void loop() {
       break;
 
     case reading_measurements:
+
+      BLE.poll();
 
       readMeasurements();
 
@@ -267,10 +281,6 @@ void loop() {
 
       DEBUG_PRINTF("Entering idle.\n");
 
-      // Turn off the radio and go to sleep
-//      BLE.disconnect();
-//      BLE.end();
-
       startDelayTime = millis();
 
       #ifdef _DEBUG_ 
@@ -280,6 +290,8 @@ void loop() {
       #endif
       
       DEBUG_PRINTF("Waking from idle. Slept for %lu mS.  Restarting BLE.\n", millis() - startDelayTime);
+
+      Watchdog.reset();
 
       // Restart BLE
       retryCounter = 0;
@@ -319,8 +331,8 @@ void loop() {
 
   previousState = currentState;
   currentState = nextState;
-  delay(50);
-  BLE.poll();
+
+  Watchdog.reset();
 }
 
 // Initialize the RTC by calling NTP and setting the initial time in the RTC
