@@ -23,7 +23,7 @@ services:
      - PRE_CREATE_DB="dbname"
     volumes:
      - ./volumes/influxdb:/var/lib/influxdb
-     - ./influxdb_backup:/var/lib/influxdb/backup
+     - ./volumes/influxdb_backup:/var/lib/influxdb/backup
     restart: unless-stopped
   grafana:
     container_name: grafana
@@ -49,12 +49,9 @@ services:
      - "1883:1883"
      - "9001:9001"
     volumes:
-     - ./volumes/mosquitto:/mosquitto
- #    - mosquitto-data:/mosquitto/data
-#     - mosquitto-log:/mosquitto/log
-#     - ./volumes/mosquitto/data:/mosquitto/data
-#     - ./volumes/mosquitto/log:/mosquitto/log
-#     - ./services/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+     - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+     - ./volumes/mosquitto/data:/mosquitto/data
+     - ./volumes/mosquitto/log:/mosquitto/log
     restart: unless-stopped
   nodered:
     container_name: nodered
@@ -63,13 +60,12 @@ services:
      - "1880:1880"
     volumes:
      - ./volumes/nodered:/data
+    restart: unless-stopped
+  telegraf:
+    container_name: telegraf
+    image: telegraf
+    volumes:
+     - ./telegraf.conf:/etc/telegraf/telegraf.conf:ro
     depends_on:
      - influx
     restart: unless-stopped
-#volumes:
-#   influxdb-data:
-#   mosquitto-data:
-#   mosquitto-log:
-#   grafana-data:
-#   grafana-log:
-#   nodered-data:

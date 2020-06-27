@@ -1,13 +1,90 @@
 [
     {
-        "id": "213f3c48.c8e784",
+        "id": "f5ef3dae.b6779",
         "type": "tab",
-        "label": "Log Environment Measures",
+        "label": "Log Environment Measurements v2",
         "disabled": false,
-        "info": "Listen for messages on tjpetz/environment from MQTT.  Log them into an Influx DB."
+        "info": ""
     },
     {
-        "id": "7ba720dd.b9535",
+        "id": "40b5a01d.2ef5d",
+        "type": "mqtt in",
+        "z": "f5ef3dae.b6779",
+        "name": "",
+        "topic": "tjpetz.com/sensor/#",
+        "qos": "2",
+        "datatype": "json",
+        "broker": "a932fdb5.61ed1",
+        "x": 260,
+        "y": 220,
+        "wires": [
+            [
+                "99db4815.e4d9e8",
+                "2c4a3012.3c792"
+            ]
+        ]
+    },
+    {
+        "id": "99db4815.e4d9e8",
+        "type": "debug",
+        "z": "f5ef3dae.b6779",
+        "name": "",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "x": 540,
+        "y": 220,
+        "wires": []
+    },
+    {
+        "id": "2c4a3012.3c792",
+        "type": "function",
+        "z": "f5ef3dae.b6779",
+        "name": "Reformat",
+        "func": "var newMsg = { \n    payload:\n        [\n            { \n                humidity: msg.payload.humidity,\n                temperature: msg.payload.temperature,\n                pressure: msg.payload.pressure,\n                time: new Date(msg.payload.sampleTime).getTime() * 1000000\n            },\n            {\n                sensor: msg.payload.sensor,\n                location: msg.payload.location\n            }\n        ]\n    }\nreturn newMsg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 520,
+        "y": 480,
+        "wires": [
+            [
+                "55136474.6e45bc",
+                "2863a8d8.adc978"
+            ]
+        ]
+    },
+    {
+        "id": "55136474.6e45bc",
+        "type": "debug",
+        "z": "f5ef3dae.b6779",
+        "name": "Test Function",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "x": 760,
+        "y": 540,
+        "wires": []
+    },
+    {
+        "id": "2863a8d8.adc978",
+        "type": "influxdb out",
+        "z": "f5ef3dae.b6779",
+        "influxdb": "f0b3a9b6.8bc968",
+        "name": "",
+        "measurement": "environment",
+        "precision": "",
+        "retentionPolicy": "",
+        "x": 900,
+        "y": 480,
+        "wires": []
+    },
+    {
+        "id": "a932fdb5.61ed1",
         "type": "mqtt-broker",
         "z": "",
         "name": "local server",
@@ -29,131 +106,15 @@
         "willPayload": ""
     },
     {
-        "id": "c216b697.1bd928",
-        "type": "mqtt-broker",
-        "z": "",
-        "name": "test server",
-        "broker": "test.mosquitto.org",
-        "port": "1883",
-        "clientid": "",
-        "usetls": false,
-        "compatmode": false,
-        "keepalive": "60",
-        "cleansession": true,
-        "birthTopic": "",
-        "birthQos": "0",
-        "birthPayload": "",
-        "closeTopic": "",
-        "closeQos": "0",
-        "closePayload": "",
-        "willTopic": "",
-        "willQos": "0",
-        "willPayload": ""
-    },
-    {
-        "id": "c2c68ceb.7068c",
+        "id": "f0b3a9b6.8bc968",
         "type": "influxdb",
         "z": "",
-        "hostname": "bbsrv02.bblab.tjpetz.com",
+        "hostname": "mqtt.bb.tjpetz.com",
         "port": "8086",
         "protocol": "http",
-        "database": "environment",
+        "database": "sensorMeasurements",
         "name": "",
         "usetls": false,
         "tls": ""
-    },
-    {
-        "id": "51cec766.9887b8",
-        "type": "mqtt in",
-        "z": "213f3c48.c8e784",
-        "name": "monitor-in (tjpetz/environment)",
-        "topic": "tjpetz/environment",
-        "qos": "0",
-        "datatype": "json",
-        "broker": "7ba720dd.b9535",
-        "x": 250,
-        "y": 200,
-        "wires": [
-            [
-                "626aca43.6b1114"
-            ]
-        ]
-    },
-    {
-        "id": "448f3d97.391344",
-        "type": "influxdb out",
-        "z": "213f3c48.c8e784",
-        "influxdb": "c2c68ceb.7068c",
-        "name": "",
-        "measurement": "humidity",
-        "precision": "",
-        "retentionPolicy": "",
-        "x": 980,
-        "y": 260,
-        "wires": []
-    },
-    {
-        "id": "626aca43.6b1114",
-        "type": "switch",
-        "z": "213f3c48.c8e784",
-        "name": "",
-        "property": "payload",
-        "propertyType": "msg",
-        "rules": [
-            {
-                "t": "hask",
-                "v": "status",
-                "vt": "str"
-            },
-            {
-                "t": "hask",
-                "v": "sensor",
-                "vt": "str"
-            }
-        ],
-        "checkall": "true",
-        "repair": false,
-        "outputs": 2,
-        "x": 530,
-        "y": 220,
-        "wires": [
-            [
-                "b390f9f2.197af8"
-            ],
-            [
-                "448f3d97.391344",
-                "3274ab56.a9af94"
-            ]
-        ]
-    },
-    {
-        "id": "3274ab56.a9af94",
-        "type": "debug",
-        "z": "213f3c48.c8e784",
-        "name": "Sensor Measurement",
-        "active": true,
-        "tosidebar": true,
-        "console": false,
-        "tostatus": false,
-        "complete": "payload",
-        "targetType": "msg",
-        "x": 880,
-        "y": 360,
-        "wires": []
-    },
-    {
-        "id": "b390f9f2.197af8",
-        "type": "debug",
-        "z": "213f3c48.c8e784",
-        "name": "Boot Message",
-        "active": true,
-        "tosidebar": true,
-        "console": false,
-        "tostatus": false,
-        "complete": "payload",
-        "targetType": "msg",
-        "x": 860,
-        "y": 180,
-        "wires": []
     }
 ]

@@ -49,6 +49,7 @@
 #include <RTCZero.h>
 #include <time.h>
 #include <ArduinoLowPower.h>
+#include <Adafruit_SleepyDog.h>
 
 #include "arduino_secret.h"
 ///////please enter your sensitive data in the Secret tab/arduino_secrets.h
@@ -79,6 +80,7 @@ BLECharacteristic temperatureCharacteristic;
 BLECharacteristic pressureCharacteristic;
 BLECharacteristic locationNameCharacteristic;
 
+// Current state measurements
 float currentTemperature = 0.0;
 float currentHumidity = 0.0;
 float currentPressure = 0.0;
@@ -122,17 +124,19 @@ FSMState_t nextState = initializing;
 FSMState_t previousState = initializing;
 
 const unsigned long idleTime = 15000;             // Time to spend in idle in mS
+const int watchdogTimeout = 60000;
 
 unsigned long now = 0;
 unsigned long lastMeasureTime = 0;
 unsigned long scanStartTime = 0;
 unsigned long maxScanTime = 30000;              // Time to scan before going idle
 
+unsigned long startDelayTime = 0;
 
 void setup() {
   
   Serial.begin(115200);
-  delay(2000);     // Give serial a moment to start
+  delay(3000);     // Give serial a moment to start
  
   DEBUG_PRINTF("RESET Register = 0x%0x\n", PM->RCAUSE.reg);
 
@@ -143,7 +147,10 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
 
+  Watchdog.enable(watchdogTimeout);
+
   initializeRTC();
+  Watchdog.reset();
 
   DEBUG_PRINTF("Starting BLE\n");
   while (!BLE.begin()) {
@@ -173,6 +180,8 @@ void loop() {
   
     case scanning:
 
+      BLE.poll();
+
       sensorPeripheral = BLE.available();
       digitalWrite(LED_BUILTIN, HIGH);
 
@@ -190,6 +199,8 @@ void loop() {
       break;
 
     case connecting:
+
+      BLE.poll();
 
       DEBUG_PRINTF("=========================================================\n");
       DEBUG_PRINTF("\tLocal Name: %s\n", sensorPeripheral.localName().c_str());
@@ -220,6 +231,8 @@ void loop() {
 
     case connected:
 
+      BLE.poll();
+
       if (sensorPeripheral.discoverService("181a")) {
         nextState = reading_measurements;
       } else {
@@ -229,43 +242,46 @@ void loop() {
 
     case reading_measurements:
 
+      BLE.poll();
+
       readMeasurements();
 
       // disconnect as we're finished reading.
       sensorPeripheral.disconnect();
+
+      // disconnect and end BLE before starting the WiFi
+      BLE.disconnect();
+      BLE.end();
+      
+      delay(1750);      // Delay to allow the Nina radio module to reset
 
       nextState = sending_measurements;
       break;
 
     case sending_measurements:
 
-      // disconnect and end BLE before starting the WiFi
-      BLE.disconnect();
-      BLE.end();
-      
-      delay(50);
-
       retryCounter = 0;
       success = sendMeasurementsToMQTT();
 
-      while (!success && retryCounter < maxTries) {
-        delay(500);
+      while (!success && (retryCounter < maxTries)) {
+        delay(500 * (retryCounter + 1));
         ++retryCounter;
         success = sendMeasurementsToMQTT();
       }
 
-     if (success) {
+      if (success) {
         nextState = idle;
       } else {
         nextState = restart;
       }
+      
       break;
 
     case idle:
 
-      // Turn off the radio and go to sleep
-      BLE.disconnect();
-      BLE.end();
+      DEBUG_PRINTF("Entering idle.\n");
+
+      startDelayTime = millis();
 
       #ifdef _DEBUG_ 
         delay(idleTime);      // delay to prevent USB from being closed
@@ -273,12 +289,16 @@ void loop() {
         LowPower.sleep(idleTime);
       #endif
       
+      DEBUG_PRINTF("Waking from idle. Slept for %lu mS.  Restarting BLE.\n", millis() - startDelayTime);
+
+      Watchdog.reset();
+
       // Restart BLE
       retryCounter = 0;
       success = BLE.begin();
       while (!success && retryCounter < maxTries) {
         ++retryCounter;
-        delay(100);
+        delay(100 * (retryCounter +1));
         success = BLE.begin();
       }
  
@@ -289,11 +309,14 @@ void loop() {
         nextState = restart; 
       }
 
-     break;
+      break;
 
     case restart:
 
       DEBUG_PRINTF("Rebooting!\n");
+      Serial.flush();
+      delay(3000);  
+
       NVIC_SystemReset();
       break;
   }
@@ -308,32 +331,42 @@ void loop() {
 
   previousState = currentState;
   currentState = nextState;
-  delay(50);
-  BLE.poll();
+
+  Watchdog.reset();
 }
 
 // Initialize the RTC by calling NTP and setting the initial time in the RTC
 void initializeRTC() {
-  // Note these are both locally scoped as we do not need them after the RTC is initialized.
+  int maxTries = 10;
+  int tries = 0;
 
   DEBUG_PRINTF("Initializing the RTC via NTP\n");
-  
   DEBUG_PRINTF("Starting WiFi for NTP Connection\n");
-  while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
-    DEBUG_PRINTF("Waiting for Wifi to connect.\n");
-    delay(3000);
+
+  while ((WiFi.begin(ssid, pass) != WL_CONNECTED) && (tries < maxTries)) {
+    DEBUG_PRINTF("initializeRTC - Connection failed, reason = %d.\n", WiFi.reasonCode());
+    tries++;
+    WiFi.disconnect();
+    WiFi.end();
+    delay(1500 * tries);
   }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    DEBUG_PRINTF("Failed to connect to wifi after %d tries.  Rebooting!\n", tries);
+    Serial.flush();
+    delay(3000);
+    NVIC_SystemReset();    
+  }
+
   DEBUG_PRINTF("WiFi Connected, address = %d.%d.%d.%d\n", WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
 
   time_t ntpTime = WiFi.getTime();
-  int maxTries = 10;
-  int tries = 0;
 
   // try a few times to get the time, it takes a moment to reach the NTP servers.
   while (ntpTime == 0 && tries < maxTries) {
     ntpTime = WiFi.getTime();
     tries++;
-    delay(1500);
+    delay(500 * (tries + 1));
   }
 
   // If we still have failed to get the time reset the board.
@@ -342,6 +375,8 @@ void initializeRTC() {
     // gracefully disconnect before rebooting
     WiFi.disconnect();
     WiFi.end();
+    Serial.flush();
+    delay(3000);
     NVIC_SystemReset();
   }
 
@@ -427,8 +462,8 @@ bool sendMeasurementsToMQTT() {
 
   DEBUG_PRINTF("Attempting to send measurement\n");
 
-  WiFi.setHostname(hostname);
-  WiFi.setTimeout(45 * 1000);    // 45 sec connection timeout
+  // WiFi.setHostname(hostname);
+  // WiFi.setTimeout(45 * 1000);    // 45 sec connection timeout
   if (WiFi.begin(ssid, pass) == WL_CONNECTED) {
 
     DEBUG_PRINTF("Attempting to connect to the MQTT broker: %s\n", broker);

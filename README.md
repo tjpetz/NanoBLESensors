@@ -9,6 +9,26 @@ be an additional small piece of fully functioning code.  My intent is to show ho
 
 ## History
 
+## 26 Jun 2020
+
+A bit of code cleanup in IoTCentral along with the addition of a watchdog timer.
+
+Several updates to the docker configuration.  The main change is that rather than requiring
+a NodeRed script to pickup the data from mqtt and write it to InFlux I now use Telegraf to
+pickup the mqtt data and write it into InFlux.  This simplifies the whole process as the
+base configuration can now be fully driven off a few config files supplied to docker.  NodeRed
+remains in the docker config file but is not required.
+
+Docker is setup to create all its volumes within the sub-directory where you install the
+docker-compose.yml file.  To ensure the access controls are correct you will need to have a
+local user:group for mosquitto of 1883:1883 and grafana of 472:472.  The folders then need to
+be configured with the owner for their respective locations.
+
+```bash
+sudo chown ./volumes/grafana grafana:grafana
+sudo chown ./volumes/mosquitto mosquitto:mosquitto
+```
+
 ## 7 Jun 2020
 
 Refactoring across the whole stack.
