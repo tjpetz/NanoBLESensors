@@ -9,6 +9,7 @@
  
 #include <ArduinoBLE.h>
 #include "BLEConfigure.h"
+#include "Watchdog.h"
 
 #define _DEBUG_
 #include "Debug.h"
@@ -143,7 +144,9 @@ void updateConfig() {
   DEBUG_PRINTF("newFlash.humidityGreenLimit = %d\n", newFlash.humidityGreenLimit);
   DEBUG_PRINTF("newFlash.humidityAmberLimit = %d\n", newFlash.humidityAmberLimit);
   
+  resetWDT();
   writeFlashPage((uint32_t *)&flashConfig, (uint32_t *)&newFlash, sizeof(newFlash));
+  resetWDT();
     
   DEBUG_PRINTF("... flash updated!\n");
 }

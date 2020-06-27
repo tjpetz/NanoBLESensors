@@ -21,6 +21,7 @@
 #include "Debug.h"
 #include "ColorLED.h"
 #include "BLEConfigure.h"
+#include "Watchdog.h"
 
 // These globals are configurable over BLE, we choose reasonable defaults
 String sensorName;
@@ -62,7 +63,7 @@ String oldSensorName;
 rgbLED led;
 
 // WDT will reset if we get hung in a loop
-const int wdt_timeout = 5;      // 5 sec timeout
+const uint32_t watchdogTimeout = 60;
 
 // Event Handlers
 void on_BLECentralConnected(BLEDevice central);
@@ -72,6 +73,8 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
   
+  initializeWDT(watchdogTimeout);
+
   Serial.begin(115200);
   delay(3500);         // wait for serial to initialize but don't fail if there is no terminal.
 
@@ -89,6 +92,8 @@ void setup() {
     DEBUG_PRINTF("Error starting BLE\n");
     delay(1000);
   }
+
+  resetWDT();
 
   // Initialize the configuration from flash settings
   sensorName = flashConfig.sensor_name;
@@ -135,6 +140,8 @@ void setup() {
   BLE.advertise();
 
   DEBUG_PRINTF("BLE initialized, waiting for connections...\n");
+
+  resetWDT();
 
   digitalWrite(LED_BUILTIN, LOW);
 }
@@ -184,6 +191,7 @@ void loop() {
   }
   
   BLE.poll();
+  resetWDT();
 }
 
 void on_BLECentralConnected(BLEDevice central) {
@@ -204,3 +212,4 @@ void on_BLECentralDisconnected(BLEDevice central) {
   } 
   BLE.advertise();  // Resume advertising.
 }
+
