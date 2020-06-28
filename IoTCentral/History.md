@@ -1,5 +1,13 @@
 # History
 
+## 28 Jun 2020
+
+Moved the long history out of the header comments and into this file.
+
+Reworked the mqtt messages.  The environment measurements are now on
+tjpetz.com/sensor/<sensor_name>/environment.  The boot messages are on
+tjpetz.com/sensor/<host_name>/boot.
+
 ## 7 Jun 2020
 
 Refactored to be state machine based.  This is working right now but
