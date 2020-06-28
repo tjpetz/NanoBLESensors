@@ -1,45 +1,9 @@
 /*
- * Simple experiment to pair up with the Nano 33 BLE Sense to read the
- * sensor values from it via BLE.
+ * Read values from a Nano 33 BLE Sense board and send them to an mqtt broker
+ * via WiFi.
  * 
  * Note as we cannot simultaneously connect the Wifi and BLE we will get a measurement
  * and then stop the BLE connection and connect to WiFi.
- * 
- * History:
- *  7 Jun 2020 - refactored to be state machine based.  This is working right now but
- *    certainly could use some optimization in the states.  There are more than are
- *    strictly required.  E.g. I think we can collapse the scanning and attempt_connection
- *    states.  Also we can add an idle state for long term sleep.
- *  6 Jun 2020 - reworked the BLE scan process.  We don't start a new scan each loop.
- *    Rather we continue with the current scan.  When we find a new device we stop
- *    scanning.  TODO: if we do not find the Environment service after connection we
- *    currently fail to correctly restart the scan.  Thus we enter an endless loop.
- *    I'm looking at implementing a proper FSM to deal with this and other conditions.
- *    Also broke out the route to send the measurements via WiFi to the MQTT server.
- *    Retrieve the location setting from the sensor and added the location to the MQTT
- *    message.
- *  4 Jun 2020 - update to use more generic name for the mqtt broker.
- *  31 May 2020 - After a few hours the board is unable to connect anymore to the BLE
- *    Sense.  Rebooting established reconnection.  Try adding a reset counter.  If after
- *    some number of failed connects, reset the board.
- *  22 May 2020 - Refactored, added the host name for the WiFi connection as there is some
- *    reference on the web that timeouts and rejects on Unifi wifi network may be due to
- *    missing hostname.
- *  14 Jan 2019 - Experimenting with driver reset approach as documented on community forum
- *    to deal with switching between WiFi and BLE.  (https://forum.arduino.cc/index.php?topic=657710.0)
- *  27 Dev 2019 - After some experimentation we need a 6 second delay between stoping either 
- *    BLE or Wifi and switching to the other.  The BLE code clearly does an NRESET on the 
- *    Nina module which should take about 2.5S to reset.  However, when I set the delay to
- *    much less than 6 seconds things stop after running a while.  Future fix should include
- *    a watch dog timer and perhaps and update to the BLE code as a full NRESET should not
- *    be necessary to use the BLE module.
- *    Note, we also need a delay after sending our mqtt message before turning off the wifi.
- *    Also starting to develop some old school macros for debugging.  Using Serial.print
- *    or the debugging code both leave the code running in a production release.  This
- *    takes space and consumes some power so I'd perfer they are only enabled when debugging.
- *  14 Dec 2019 - Very ugly code at this point.  It works but needs serious refactoring.
- *  13 Dec 2019 - Add WiFi and publish the temp and humidity to an MQTT broker.
- *  8 Dec 2019 19:00Z - Added reading the temperature characteristic.
  */
 
 #include <Arduino.h>
@@ -391,13 +355,23 @@ void initializeRTC() {
   if(!mqttClient.connect(broker, port)) {
       DEBUG_PRINTF("Error Connecting to mqtt broker\n");
   } else {
-    const char topic[] = "tjpetz/environment/temp";
-    char buff[255];
-    snprintf(buff, sizeof(buff), "{\"status\": \"boot at %04d-%02d-%02d %02d:%02d:%02d\"}", rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds()); 
-    DEBUG_PRINTF("Connected to mqtt broker!\n");
+    char topic[MAX_TOPIC_LENGTH];
+    snprintf(topic, sizeof(topic), "%s/%s/boot", topicRoot, hostname);
+    DEBUG_PRINTF("Topic = %s\n", topic);
+
+    char msg[128];
+    snprintf(msg, sizeof(msg), 
+      "{ \"boot\": \"%04d-%02d-%02dT%02d:%02d:%02d\", \"IP\": \"%d.%d.%d.%d\", \"rssi\": %d, \"reset_reason\": %0x }", 
+        rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds(),
+        WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3],
+        WiFi.RSSI(),
+        PM->RCAUSE.reg
+    ); 
+    DEBUG_PRINTF("Sending msg = %s\n", msg);
     mqttClient.beginMessage(topic);
-    mqttClient.print(buff);
+    mqttClient.print(msg);
     mqttClient.endMessage();
+    delay(mqttTxDelay);
     DEBUG_PRINTF("Sent message\n");
   }
 
@@ -462,8 +436,6 @@ bool sendMeasurementsToMQTT() {
 
   DEBUG_PRINTF("Attempting to send measurement\n");
 
-  // WiFi.setHostname(hostname);
-  // WiFi.setTimeout(45 * 1000);    // 45 sec connection timeout
   if (WiFi.begin(ssid, pass) == WL_CONNECTED) {
 
     DEBUG_PRINTF("Attempting to connect to the MQTT broker: %s\n", broker);
@@ -476,7 +448,7 @@ bool sendMeasurementsToMQTT() {
 
       char topic[MAX_TOPIC_LENGTH];
 
-      snprintf(topic, sizeof(topic), "%s/%s", topicRoot, connectedDeviceName.c_str());
+      snprintf(topic, sizeof(topic), "%s/%s/environment", topicRoot, connectedDeviceName.c_str());
 
       DEBUG_PRINTF("Topic = %s\n", topic);
       mqttClient.beginMessage(topic);
