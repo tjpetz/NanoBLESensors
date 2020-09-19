@@ -14,6 +14,9 @@
 #include <time.h>
 #include <ArduinoLowPower.h>
 #include <Adafruit_SleepyDog.h>
+#define NO_ADAFRUIT_SSD1306_COLOR_COMPATIBILITY
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 
 #include "arduino_secret.h"
 ///////please enter your sensitive data in the Secret tab/arduino_secrets.h
@@ -33,7 +36,7 @@ const char broker[] = "mqtt.bb.tjpetz.com";
 const int port = 1883;
 const char topicRoot[] = "tjpetz.com/sensor";
 const unsigned int MAX_TOPIC_LENGTH = 255;
-const char hostname[] = "iot_central_001";
+const char hostname[] = "iot_central_002";
 byte macAddress[6];               // MAC address of the Wifi which we'll use in reporting
 
 // The Nano 33 BLE Sense sensor and it's characteristics.
@@ -88,7 +91,7 @@ FSMState_t nextState = initializing;
 FSMState_t previousState = initializing;
 
 const unsigned long idleTime = 15000;             // Time to spend in idle in mS
-const int watchdogTimeout = 60000;
+const int watchdogTimeout = 16384;                // max timeout is 16.384 mS
 
 unsigned long now = 0;
 unsigned long lastMeasureTime = 0;
@@ -96,6 +99,22 @@ unsigned long scanStartTime = 0;
 unsigned long maxScanTime = 30000;              // Time to scan before going idle
 
 unsigned long startDelayTime = 0;
+
+// the OLED display
+Adafruit_SSD1306 display(128, 32);
+const unsigned int displayModePin = 2;
+volatile int displayPage = 0;
+const int maxDisplayPages = 3;
+
+void displayModeISR() {
+  static unsigned long lastInterruptTime = 0;
+  unsigned long interruptTime = millis();
+  if (interruptTime - lastInterruptTime > 150) {
+    displayPage = (displayPage + 1) % maxDisplayPages;
+    oledDisplayPage(displayPage);  
+  }
+  lastInterruptTime = interruptTime;
+}
 
 void setup() {
   
@@ -113,6 +132,10 @@ void setup() {
 
   Watchdog.enable(watchdogTimeout);
 
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    DEBUG_PRINTF("Error initializing OLED display\n");
+  }
+
   initializeRTC();
   Watchdog.reset();
 
@@ -127,6 +150,10 @@ void setup() {
 
   currentState = start_scan;
   previousState = initializing;
+
+  // The ISR will switch between display pages
+  pinMode(displayModePin, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(displayModePin), displayModeISR, FALLING);
 
   digitalWrite(LED_BUILTIN, LOW);
 }
@@ -228,6 +255,7 @@ void loop() {
       success = sendMeasurementsToMQTT();
 
       while (!success && (retryCounter < maxTries)) {
+        Watchdog.reset();
         delay(500 * (retryCounter + 1));
         ++retryCounter;
         success = sendMeasurementsToMQTT();
@@ -293,11 +321,42 @@ void loop() {
   }
   #endif
 
+  oledDisplayPage(displayPage);
+  
   previousState = currentState;
   currentState = nextState;
 
   Watchdog.reset();
 }
+
+void oledDisplayPage(const unsigned int page) {
+
+  switch (page) {
+    case 0:
+      char buffState[255], buffTime[255];
+      snprintf(buffState, 255, "State: %s -> %s\n", 
+        debugStateNames[currentState], debugStateNames[nextState]);
+      snprintf(buffTime, 255, "%04d-%02d-%02d %02d:%02d:%02d\n", 
+        rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
+        
+      display.clearDisplay();
+      display.setTextColor(SSD1306_WHITE);
+      display.setCursor(0, 0); display.print(buffState);
+      display.setCursor(0, 25); display.print(buffTime);
+      display.display();
+      break;
+    case 1:
+      display.clearDisplay();
+      display.setTextColor(SSD1306_WHITE);
+      display.setCursor(0, 0); display.print("Page 1");
+      display.display();
+      break;
+    default:
+      display.clearDisplay();
+      display.display();
+  }
+}
+
 
 // Initialize the RTC by calling NTP and setting the initial time in the RTC
 void initializeRTC() {
@@ -312,6 +371,7 @@ void initializeRTC() {
     tries++;
     WiFi.disconnect();
     WiFi.end();
+    Watchdog.reset();
     delay(1500 * tries);
   }
 

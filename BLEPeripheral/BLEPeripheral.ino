@@ -15,6 +15,9 @@
 #include <ArduinoBLE.h>
 #include <Arduino_HTS221.h>
 #include <Arduino_LPS22HB.h>
+#define NO_ADAFRUIT_SSD1306_COLOR_COMPATIBILITY
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 
 #define _DEBUG_
 
@@ -69,6 +72,17 @@ const uint32_t watchdogTimeout = 60;
 void on_BLECentralConnected(BLEDevice central);
 void on_BLECentralDisconnected(BLEDevice central);
 
+// counters for checking if we've lost connections
+uint32_t connPrevTime = 0;
+const int maxZeroRSSI = 10;       // this many times of zero measurement before reseting
+int currentZeroRSSICount = 0;
+
+// the oled display
+Adafruit_SSD1306 display(128, 64);
+
+String lastCentralAddr = "";
+int lastCentralRSSI = 0;
+
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
@@ -76,8 +90,12 @@ void setup() {
   initializeWDT(watchdogTimeout);
 
   Serial.begin(115200);
-  delay(3500);         // wait for serial to initialize but don't fail if there is no terminal.
+  delay(1500);         // wait for serial to initialize but don't fail if there is no terminal.
 
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    DEBUG_PRINTF("Error initializing OLED display\n");
+  }
+  
   while (!HTS.begin()) {
     DEBUG_PRINTF("Error initializing HTS sensor\n");
     delay(1000);
@@ -143,6 +161,10 @@ void setup() {
 
   resetWDT();
 
+  // counters
+  previousMillis = millis();
+  connPrevTime = millis();
+
   digitalWrite(LED_BUILTIN, LOW);
 }
 
@@ -188,14 +210,56 @@ void loop() {
       pressureCharacteristic.writeValue(currentPressure);
       oldPressure = currentPressure;
     }
+
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, 0); display.print("Temperature: "); display.print(currentTemperature / 100.0); display.print(" C");
+    display.setCursor(0, 11); display.print("Humidity: "); display.print(currentHumidity / 100.0); display.print(" % RH");
+    display.setCursor(0, 22); display.print("Pressure: "); display.print(currentPressure / 10.0 / 3386.389); display.print(" inHg");
+    display.setCursor(0, 33); display.print("Name: "); display.print(sensorName);
+    display.setCursor(0, 44); display.print("Location: "); display.print(sensorLocation);
+    display.setCursor(0, 55); display.print(lastCentralAddr); // display.print(" at "); display.print(lastCentralRSSI);
+    display.display();
   }
   
   BLE.poll();
   resetWDT();
+
+  // BLE may remain connected if central goes out of range.  When this happens
+  // we do not restart and readvertise, so we end up hanging.  Every second
+  // check if we're connected and if so that the rssi is less than 0.  If after
+  // 5 checks we still have 0 rssi assume the device is out of range and force
+  // a disconnect and start adversing again.
+
+  if (millis() - connPrevTime >= 5000) {
+    connPrevTime = millis();
+
+    BLEDevice central = BLE.central();
+
+    if (central) {
+      DEBUG_PRINTF("central RSSI = %d, zeroRSSIcount = %d\n", central.rssi(), currentZeroRSSICount);
+      if (central.connected()) {
+        if (central.rssi() < 0) {
+          // legit signal so reset the zero counters
+          currentZeroRSSICount = 0;
+        } else {
+          currentZeroRSSICount++;
+        }
+
+        if (currentZeroRSSICount > maxZeroRSSI) {
+          DEBUG_PRINTF("Zero RSSI count exceeded, forcing disconnect!\n");
+          central.disconnect();
+          BLE.advertise();
+        }
+      }
+    }
+  }
 }
 
 void on_BLECentralConnected(BLEDevice central) {
   DEBUG_PRINTF("Connection from: %s, rssi = %d, at %lu\n", central.address().c_str(), central.rssi(), millis());
+  lastCentralAddr = central.address();
+  lastCentralRSSI = central.rssi();
   digitalWrite(LED_BUILTIN, HIGH); 
   BLE.stopAdvertise(); // Don't advertise while connected.
 }
@@ -212,4 +276,3 @@ void on_BLECentralDisconnected(BLEDevice central) {
   } 
   BLE.advertise();  // Resume advertising.
 }
-
