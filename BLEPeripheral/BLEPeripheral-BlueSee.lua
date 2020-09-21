@@ -1,27 +1,18 @@
 local bluesee = require "bluesee"
 
 -- Config service definition
-local config_service_uuid = bluesee.UUID.new('44af2abf-f3d9-4429-bbb8-ec770f1e355a')
-bluesee.set_display_name(config_service_uuid, 'IoTCentral Configuration')
+local config_service_uuid = bluesee.UUID.new('7f76c1b2-c592-4ace-8089-47bf14d07ced')
+bluesee.set_display_name(config_service_uuid, 'BLEPeripheral Configuration')
 bluesee.set_display_category(config_service_uuid, bluesee.ui)
 
-local wifiSSID_uuid = bluesee.UUID.new('0465ac13-a0f3-46a6-990a-5a04b32b3b60')
-local wifiPassword_uuid = bluesee.UUID.new('27030384-eac9-4907-8e44-5c16d778aa7a')
-local hostname_uuid = bluesee.UUID.new('ef42bf97-1b9c-4d45-941d-d60dc564dc6f')
-local mqttBroker_uuid = bluesee.UUID.new('0d071785-b22b-49d6-86be-270de52da930')
-local topicRoot_uuid = bluesee.UUID.new('18cda5b0-3b76-4319-9716-acd1a409d3f6')
-local sampleInterval_uuid = bluesee.UUID.new('1682229f-bb5c-4f4a-96a9-1027f13d83f9')
-local isConfigurationLocked_uuid = bluesee.UUID.new('d02db20e-6e1f-4541-bd3d-7715e00b2b82')
-local configurationLock_uuid = bluesee.UUID.new('29636a43-d59a-46a1-ad0a-34aa23a0e90c')
-local configurationUnlock_uuid = bluesee.UUID.new('508458ce-2dad-42de-aad1-4969608adb6a')
+local sensorName_uuid = bluesee.UUID.new('641aff8f-217e-4ddb-aece-3053b128c27d')
+local sensorLocation_uuid = bluesee.UUID.new('52b8d6c4-cd20-4f51-bf71-ea0de788ebb4')
+local humidityGreenLimit_uuid = bluesee.UUID.new('ebf92cf8-2744-4df2-be70-e856fcaf01a7')
+local humidityAmberLimit_uuid = bluesee.UUID.new('90441958-8975-4f62-aa13-08bdb86acd16')
+local configurationLock_uuid = bluesee.UUID.new('3ffb9262-18a2-4acf-918c-2f8932577c48')
+local configurationUnlock_uuid = bluesee.UUID.new('2b1823e7-2d41-46f8-98d8-fd830ffdd68e')
+local configurationIsLocked_uuid = bluesee.UUID.new('32b6a19f-ddac-45db-a1b5-8a7dbe9a76fc')
 
--- Create a collection of controls to process
--- readable and/or writeable text strings
--- If the characteristic is readable a label
--- is included whos value is the characteristic
--- If the characteristic is writable a textfield
--- control is included and the write button will
--- update the characteristic
 function add_ReadWriteTextControl(span, title, ch)
 
     local label = nil
@@ -152,31 +143,24 @@ end
 
 -- Register the Config service
 bluesee.register_service(config_service_uuid, function(span)
-
     
     -- Build the UI and add handlers based on the available and known
     -- characteristics
     span.on_ch_discovered = function(ch)
 
-        if ch.uuid == wifiSSID_uuid then
-            add_ReadWriteTextControl(span, "SSID", ch)
-        elseif ch.uuid == wifiPassword_uuid then
-            add_ReadWriteTextControl(span, "WiFi Password", ch)
-        elseif ch.uuid == hostname_uuid then
-            add_ReadWriteTextControl(span, "Hostname", ch)
-        elseif ch.uuid == mqttBroker_uuid then
-            add_ReadWriteTextControl(span, "MQTT Broker", ch)
-        elseif ch.uuid == topicRoot_uuid then
-            add_ReadWriteTextControl(span, "Root Topic", ch)
-        elseif ch.uuid == sampleInterval_uuid then
-            add_ReadWriteUnsignedIntegerControl(span, "Sample Interval", ch)
-        elseif ch.uuid == isConfigurationLocked_uuid then
-            add_ReadWriteUnsignedIntegerControl(span, "Configuration Is Locked", ch)
+        if ch.uuid == sensorName_uuid then
+            add_ReadWriteTextControl(span, "Sensor Name", ch)
+        elseif ch.uuid == sensorLocation_uuid then
+            add_ReadWriteTextControl(span, "Sensor Location", ch)
+        elseif ch.uuid == humidityGreenLimit_uuid then
+            add_ReadWriteUnsignedIntegerControl(span, "Humidity Green Limit", ch)
+        elseif ch.uuid == humidityAmberLimit_uuid then
+            add_ReadWriteUnsignedIntegerControl(span, "Humidity Amber Limit", ch)
         elseif ch.uuid == configurationLock_uuid then
-            add_ReadWriteTextControl(span, "Lock/Unlock Configuration", ch)
-        else
-            span:log("Error - unknown characteristic" .. ch.uuid)
+            add_ReadWriteTextControl(span, "Lock", ch)
+        elseif ch.uuid == configurationUnlock_uuid then
+            add_ReadWriteTextControl(span, "Unlock", ch)
         end
     end
-
- end)
+end
+)

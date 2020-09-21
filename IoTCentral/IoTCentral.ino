@@ -18,10 +18,11 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
+#include "ConfigService.h"
 #include "arduino_secret.h"
 ///////please enter your sensitive data in the Secret tab/arduino_secrets.h
-char ssid[] = SECRET_SSID;        // your network SSID (name)
-char pass[] = SECRET_PASS;    // your network password (use for WPA, or use as key for WEP)
+char ssid[255];        // your network SSID (name)
+char pass[255];    // your network password (use for WPA, or use as key for WEP)
 
 #define _DEBUG_
 #include "Debug.h"
@@ -38,6 +39,8 @@ const char topicRoot[] = "tjpetz.com/sensor";
 const unsigned int MAX_TOPIC_LENGTH = 255;
 const char hostname[] = "iot_central_002";
 byte macAddress[6];               // MAC address of the Wifi which we'll use in reporting
+
+ConfigService configurationService(hostname, broker, topicRoot, 50);
 
 // The Nano 33 BLE Sense sensor and it's characteristics.
 BLEDevice sensorPeripheral;
@@ -74,7 +77,7 @@ typedef enum FSMStates {
 
 #ifdef _DEBUG_
 char debugStateNames [9][32] = {
-  "initializing", 
+  "initializing",                 // Initial state, wait here until configured by BLE.
   "start_scan", 
   "scanning", 
   "connecting", 
@@ -91,7 +94,7 @@ FSMState_t nextState = initializing;
 FSMState_t previousState = initializing;
 
 const unsigned long idleTime = 15000;             // Time to spend in idle in mS
-const int watchdogTimeout = 16384;                // max timeout is 16.384 mS
+const int watchdogTimeout = 16384;                // max timeout is 16.384 S
 
 unsigned long now = 0;
 unsigned long lastMeasureTime = 0;
@@ -123,21 +126,21 @@ void setup() {
  
   DEBUG_PRINTF("RESET Register = 0x%0x\n", PM->RCAUSE.reg);
 
-  WiFi.macAddress(macAddress);
-  DEBUG_PRINTF("MAC Address = %02x:%02x:%02x:%02x:%02x:%02x\n", macAddress[5], macAddress[4], 
-    macAddress[3], macAddress[2], macAddress[1], macAddress[0]);
+//  WiFi.macAddress(macAddress);
+//  DEBUG_PRINTF("MAC Address = %02x:%02x:%02x:%02x:%02x:%02x\n", macAddress[5], macAddress[4], 
+//    macAddress[3], macAddress[2], macAddress[1], macAddress[0]);
 
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
 
-  Watchdog.enable(watchdogTimeout);
+//  Watchdog.enable(watchdogTimeout);
 
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     DEBUG_PRINTF("Error initializing OLED display\n");
   }
 
-  initializeRTC();
-  Watchdog.reset();
+//  initializeRTC();
+//  Watchdog.reset();
 
   DEBUG_PRINTF("Starting BLE\n");
   while (!BLE.begin()) {
@@ -145,10 +148,15 @@ void setup() {
     delay(1000);
   }
 
+  BLE.setLocalName("EnvGateWay001");
+  configurationService.begin();
+  BLE.setAdvertisedService(configurationService.getConfigService());
+  BLE.advertise();
+  
   now = millis();
   lastMeasureTime = now;
 
-  currentState = start_scan;
+  currentState = initializing;
   previousState = initializing;
 
   // The ISR will switch between display pages
@@ -162,6 +170,27 @@ void loop() {
 
   switch (currentState) {
 
+    case initializing:
+      // For for initialization
+      if (!configurationService.isInitialized) {
+        BLE.poll(idleTime);
+      } else {
+        // Complete the initialization
+        DEBUG_PRINTF("Completing the initialization\n");
+        BLE.disconnect();
+        BLE.end();
+        delay(1750);
+        strcpy(ssid, configurationService.ssid.c_str());
+        strcpy(pass, configurationService.wifiPassword.c_str());
+        initializeRTC();
+        BLE.begin();
+        BLE.addService(configurationService.getConfigService());
+        BLE.setAdvertisedService(configurationService.getConfigService());
+        BLE.advertise();
+        nextState = start_scan;
+      }
+      break;
+      
     case start_scan:
       
       BLE.scanForUuid(environmentServiceUUID);

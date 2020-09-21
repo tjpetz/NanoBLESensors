@@ -25,6 +25,7 @@
 #include "ColorLED.h"
 #include "BLEConfigure.h"
 #include "Watchdog.h"
+#include "BatteryMonitor.h"
 
 // These globals are configurable over BLE, we choose reasonable defaults
 String sensorName;
@@ -82,6 +83,8 @@ Adafruit_SSD1306 display(128, 64);
 
 String lastCentralAddr = "";
 int lastCentralRSSI = 0;
+
+BatteryMonitor batteryMonitor(A0, D2);
 
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
@@ -144,6 +147,8 @@ void setup() {
   temperatureCharacteristic.broadcast();
   
   config_configService();
+
+  batteryMonitor.begin();
   
   // Add the service callbacks just so we can provide some debug messages
   BLE.setEventHandler(BLEConnected, on_BLECentralConnected);
@@ -211,6 +216,9 @@ void loop() {
       oldPressure = currentPressure;
     }
 
+    // Update the battery Voltage
+    batteryMonitor.measureVoltage();
+    
     display.clearDisplay();
     display.setTextColor(SSD1306_WHITE);
     display.setCursor(0, 0); display.print("Temperature: "); display.print(currentTemperature / 100.0); display.print(" C");
