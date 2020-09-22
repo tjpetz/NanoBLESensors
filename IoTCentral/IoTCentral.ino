@@ -295,7 +295,12 @@ void loop() {
       } else {
         nextState = restart;
       }
-      
+
+      BLE.begin();
+      BLE.addService(configurationService.getConfigService());
+      BLE.setAdvertisedService(configurationService.getConfigService());
+      BLE.advertise();
+
       break;
 
     case idle:
@@ -304,24 +309,26 @@ void loop() {
 
       startDelayTime = millis();
 
-      #ifdef _DEBUG_ 
-        delay(idleTime);      // delay to prevent USB from being closed
-      #else
-        LowPower.sleep(idleTime);
-      #endif
+      BLE.poll(idleTime);
+      
+//      #ifdef _DEBUG_ 
+//        delay(idleTime);      // delay to prevent USB from being closed
+//      #else
+//        LowPower.sleep(idleTime);
+//      #endif
       
       DEBUG_PRINTF("Waking from idle. Slept for %lu mS.  Restarting BLE.\n", millis() - startDelayTime);
 
       Watchdog.reset();
 
-      // Restart BLE
-      retryCounter = 0;
-      success = BLE.begin();
-      while (!success && retryCounter < maxTries) {
-        ++retryCounter;
-        delay(100 * (retryCounter +1));
-        success = BLE.begin();
-      }
+//      // Restart BLE
+//      retryCounter = 0;
+//      success = BLE.begin();
+//      while (!success && retryCounter < maxTries) {
+//        ++retryCounter;
+//        delay(100 * (retryCounter +1));
+//        success = BLE.begin();
+//      }
  
       if (success) {
         nextState = start_scan;
