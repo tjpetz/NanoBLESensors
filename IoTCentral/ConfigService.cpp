@@ -3,6 +3,21 @@
 #define _DEBUG_
 #include "Debug.h"
 
+#include <FlashAsEEPROM.h>
+
+typedef struct {
+  boolean valid;
+  char ssid[255];
+  char wifiPassword[255];
+  char hostName[255];
+  char mqttBroker[255];
+  char topicRoot[255];
+  unsigned int sampleInterval;
+  char configurationPassword[255];
+} ConfigServiceEEPROM_t;
+
+FlashStorage(flash_configuration, ConfigServiceEEPROM_t);
+
 static ConfigService* singleton;
 
 static void onLock(BLEDevice central, BLECharacteristic characteristic);
@@ -30,8 +45,25 @@ ConfigService::ConfigService(String p_hostName, String p_mqttBroker, String p_to
   sampleInterval = p_sampleInterval;
 
   isInitialized = false;
-  configurationPassword = "0000";
+  configurationPassword = "";
   isLocked = false;
+
+  ConfigServiceEEPROM_t flashConfig;
+
+  flashConfig = flash_configuration.read();
+  if (flashConfig.valid) {
+    // Load the config settings from flash
+    ssid = flashConfig.ssid;
+    wifiPassword = flashConfig.wifiPassword;
+    hostName = flashConfig.hostName;
+    mqttBroker = flashConfig.mqttBroker;
+    topicRoot = flashConfig.topicRoot;
+    sampleInterval = flashConfig.sampleInterval;
+    configurationPassword = flashConfig.configurationPassword;
+
+    isInitialized = true;
+    isLocked = false;
+  }
 }
 
 
@@ -83,6 +115,22 @@ void onLock(BLEDevice central, BLECharacteristic characteristic) {
     singleton->ssid = singleton->ssidCharacteristic_.value();
     singleton->wifiPassword = singleton->wifiPasswordCharacteristic_.value();
     singleton->isLockedCharacteristic_.writeValue(1);
+    
+    // Save the configuration to EEPROM
+    ConfigServiceEEPROM_t flashConfig;
+  
+    // Set the config object
+    flashConfig.valid = true;
+    strcpy(flashConfig.ssid, singleton->ssid.c_str());
+    strcpy(flashConfig.wifiPassword, singleton->wifiPassword.c_str());
+    strcpy(flashConfig.hostName, singleton->hostName.c_str());
+    strcpy(flashConfig.mqttBroker, singleton->mqttBroker.c_str());
+    strcpy(flashConfig.topicRoot, singleton->topicRoot.c_str());
+    flashConfig.sampleInterval = singleton->sampleInterval;
+    strcpy(flashConfig.configurationPassword, singleton->configurationPassword.c_str());
+
+    flash_configuration.write(flashConfig);
+      
   } else {
     if (singleton->lockCharacteristic_.value() == singleton->configurationPassword) {
       DEBUG_PRINTF("Configuration Unlocked with password = %s\n", singleton->lockCharacteristic_.value().c_str());

@@ -19,28 +19,36 @@
 #include <Adafruit_SSD1306.h>
 
 #include "ConfigService.h"
-#include "arduino_secret.h"
-///////please enter your sensitive data in the Secret tab/arduino_secrets.h
-char ssid[255];        // your network SSID (name)
-char pass[255];    // your network password (use for WPA, or use as key for WEP)
 
 #define _DEBUG_
 #include "Debug.h"
 
-RTCZero rtc;                            // Real Time Clock so we can time stamp data
 
-// WiFi and MQTT
+#define DEFAULT_HOSTNAME        "iot_central_001"
+#define DEFAULT_MQTTBROKER      "mqtt.bb.tjpetz.com"
+#define DEFAULT_MQTTROOTTOPIC   "tjpetz.com/sensor"
+#define DEFAULT_SAMPLEINTERVAL  60
+
+// Configuration settings managed by BLE and Flash
+ConfigService configurationService(DEFAULT_HOSTNAME, 
+    DEFAULT_MQTTBROKER, 
+    DEFAULT_MQTTROOTTOPIC, 
+    DEFAULT_SAMPLEINTERVAL);        // Config settings with sensible defaults
+
+// WiFi and MQTT - configured via the ConfigService
+char ssid[255];     // your network SSID (name)
+char pass[255];     // your network password (use for WPA, or use as key for WEP)
 WiFiClient wifiClient;                  // Our wifi client
 MqttClient mqttClient(wifiClient);      // Our MQTT client
 const int mqttTxDelay = 2500;           // Time (mS) between the last call to mqtt and turning off the wifi.
-const char broker[] = "mqtt.bb.tjpetz.com";
+char broker[255];
 const int port = 1883;
-const char topicRoot[] = "tjpetz.com/sensor";
+char topicRoot[255];
 const unsigned int MAX_TOPIC_LENGTH = 255;
-const char hostname[] = "iot_central_002";
+char hostname[255];
 byte macAddress[6];               // MAC address of the Wifi which we'll use in reporting
 
-ConfigService configurationService(hostname, broker, topicRoot, 50);
+RTCZero rtc;                            // Real Time Clock so we can time stamp data
 
 // The Nano 33 BLE Sense sensor and it's characteristics.
 BLEDevice sensorPeripheral;
@@ -93,7 +101,7 @@ FSMState_t currentState = initializing;
 FSMState_t nextState = initializing;
 FSMState_t previousState = initializing;
 
-const unsigned long idleTime = 15000;             // Time to spend in idle in mS
+const unsigned long idleTime = 10000;             // Time to spend in idle in mS
 const int watchdogTimeout = 16384;                // max timeout is 16.384 S
 
 unsigned long now = 0;
@@ -109,16 +117,6 @@ const unsigned int displayModePin = 2;
 volatile int displayPage = 0;
 const int maxDisplayPages = 3;
 
-void displayModeISR() {
-  static unsigned long lastInterruptTime = 0;
-  unsigned long interruptTime = millis();
-  if (interruptTime - lastInterruptTime > 150) {
-    displayPage = (displayPage + 1) % maxDisplayPages;
-    oledDisplayPage(displayPage);  
-  }
-  lastInterruptTime = interruptTime;
-}
-
 void setup() {
   
   Serial.begin(115200);
@@ -126,21 +124,17 @@ void setup() {
  
   DEBUG_PRINTF("RESET Register = 0x%0x\n", PM->RCAUSE.reg);
 
-//  WiFi.macAddress(macAddress);
-//  DEBUG_PRINTF("MAC Address = %02x:%02x:%02x:%02x:%02x:%02x\n", macAddress[5], macAddress[4], 
-//    macAddress[3], macAddress[2], macAddress[1], macAddress[0]);
-
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
 
-//  Watchdog.enable(watchdogTimeout);
+  // Initialize our global configuration
+  updateGlobalConfiguration();
+  
+  Watchdog.enable(watchdogTimeout);
 
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     DEBUG_PRINTF("Error initializing OLED display\n");
   }
-
-//  initializeRTC();
-//  Watchdog.reset();
 
   DEBUG_PRINTF("Starting BLE\n");
   while (!BLE.begin()) {
@@ -148,7 +142,7 @@ void setup() {
     delay(1000);
   }
 
-  BLE.setLocalName("EnvGateWay001");
+  BLE.setLocalName(hostname);
   configurationService.begin();
   BLE.setAdvertisedService(configurationService.getConfigService());
   BLE.advertise();
@@ -164,6 +158,9 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(displayModePin), displayModeISR, FALLING);
 
   digitalWrite(LED_BUILTIN, LOW);
+
+  Watchdog.reset();
+
 }
 
 void loop() {
@@ -180,9 +177,10 @@ void loop() {
         BLE.disconnect();
         BLE.end();
         delay(1750);
-        strcpy(ssid, configurationService.ssid.c_str());
-        strcpy(pass, configurationService.wifiPassword.c_str());
+        updateGlobalConfiguration();
+        Watchdog.reset();
         initializeRTC();
+        Watchdog.reset();
         BLE.begin();
         BLE.addService(configurationService.getConfigService());
         BLE.setAdvertisedService(configurationService.getConfigService());
@@ -309,33 +307,15 @@ void loop() {
 
       startDelayTime = millis();
 
+      Watchdog.reset();
+
       BLE.poll(idleTime);
-      
-//      #ifdef _DEBUG_ 
-//        delay(idleTime);      // delay to prevent USB from being closed
-//      #else
-//        LowPower.sleep(idleTime);
-//      #endif
       
       DEBUG_PRINTF("Waking from idle. Slept for %lu mS.  Restarting BLE.\n", millis() - startDelayTime);
 
       Watchdog.reset();
 
-//      // Restart BLE
-//      retryCounter = 0;
-//      success = BLE.begin();
-//      while (!success && retryCounter < maxTries) {
-//        ++retryCounter;
-//        delay(100 * (retryCounter +1));
-//        success = BLE.begin();
-//      }
- 
-      if (success) {
-        nextState = start_scan;
-      } else {
-        DEBUG_PRINTF("Failed to restart BLE so rebooting!\n");
-        nextState = restart; 
-      }
+      nextState = start_scan;
 
       break;
 
@@ -365,32 +345,33 @@ void loop() {
   Watchdog.reset();
 }
 
+
 void oledDisplayPage(const unsigned int page) {
 
+  char buffLine1[255], buffLine2[255];
+  
   switch (page) {
     case 0:
-      char buffState[255], buffTime[255];
-      snprintf(buffState, 255, "State: %s -> %s\n", 
+      snprintf(buffLine1, 255, "State: %s -> %s\n", 
         debugStateNames[currentState], debugStateNames[nextState]);
-      snprintf(buffTime, 255, "%04d-%02d-%02d %02d:%02d:%02d\n", 
+      snprintf(buffLine2, 255, "%04d-%02d-%02d %02d:%02d:%02d\n", 
         rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
-        
-      display.clearDisplay();
-      display.setTextColor(SSD1306_WHITE);
-      display.setCursor(0, 0); display.print(buffState);
-      display.setCursor(0, 25); display.print(buffTime);
-      display.display();
       break;
     case 1:
-      display.clearDisplay();
-      display.setTextColor(SSD1306_WHITE);
-      display.setCursor(0, 0); display.print("Page 1");
-      display.display();
+      snprintf(buffLine1, 255, "Host Name: %s", hostname);
+      snprintf(buffLine2, 255, "topic Root: %s", topicRoot); 
       break;
     default:
-      display.clearDisplay();
-      display.display();
+      memset(buffLine1, 0, sizeof(buffLine1));
+      memset(buffLine2, 0, sizeof(buffLine1));
   }
+
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0); display.print(buffLine1);
+  display.setCursor(0, 25); display.print(buffLine2);
+  display.display();
+ 
 }
 
 
@@ -571,4 +552,25 @@ bool sendMeasurementsToMQTT() {
   WiFi.end();
 
   return(status);
+}
+
+void updateGlobalConfiguration() {
+  // Save the configuration service settings into the global variables.
+
+  strcpy(ssid, configurationService.ssid.c_str());
+  strcpy(pass, configurationService.wifiPassword.c_str());
+  strcpy(hostname, configurationService.hostName.c_str());
+  strcpy(broker, configurationService.mqttBroker.c_str());
+  strcpy(topicRoot, configurationService.topicRoot.c_str());
+}
+
+// Switch pages on the display when we receive an interrupt
+void displayModeISR() {
+  static unsigned long lastInterruptTime = 0;
+  unsigned long interruptTime = millis();
+  if (interruptTime - lastInterruptTime > 150) {
+    displayPage = (displayPage + 1) % maxDisplayPages;
+    oledDisplayPage(displayPage);  
+  }
+  lastInterruptTime = interruptTime;
 }
