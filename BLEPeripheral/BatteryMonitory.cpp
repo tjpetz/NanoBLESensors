@@ -23,7 +23,7 @@ void BatteryMonitor::begin() {
   BLE.addService(batteryService_);
 }
 
-BLEService BatteryMonitor::getBatteryService() const {
+BLEService& BatteryMonitor::getBatteryService() {
   return batteryService_;
 }
 

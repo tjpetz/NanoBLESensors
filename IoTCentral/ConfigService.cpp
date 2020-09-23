@@ -18,9 +18,9 @@ typedef struct {
 
 FlashStorage(flash_configuration, ConfigServiceEEPROM_t);
 
-static ConfigService* singleton;
+static ConfigService* singleton;        /** the one and only instance, used in the callbacks */
 
-static void onLock(BLEDevice central, BLECharacteristic characteristic);
+void onLock(BLEDevice central, BLECharacteristic characteristic);
 
 ConfigService::ConfigService(String p_hostName, String p_mqttBroker, String p_topicRoot, unsigned int p_sampleInterval)
   : service_("44af2abf-f3d9-4429-bbb8-ec770f1e355a"),

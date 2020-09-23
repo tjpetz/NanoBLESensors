@@ -1,4 +1,4 @@
-/*
+/**
  * Read values from a Nano 33 BLE Sense board and send them to an mqtt broker
  * via WiFi.
  * 
@@ -73,6 +73,7 @@ bool success = false;
 // State machine states
 typedef enum FSMStates {
     initializing,
+    configurable,
     start_scan,
     scanning,
     connecting,
@@ -84,8 +85,9 @@ typedef enum FSMStates {
 } FSMState_t;
 
 #ifdef _DEBUG_
-char debugStateNames [9][32] = {
+char debugStateNames [10][32] = {
   "initializing",                 // Initial state, wait here until configured by BLE.
+  "configurable",
   "start_scan", 
   "scanning", 
   "connecting", 
@@ -100,6 +102,8 @@ char debugStateNames [9][32] = {
 FSMState_t currentState = initializing;
 FSMState_t nextState = initializing;
 FSMState_t previousState = initializing;
+FSMState_t configurationPriorState = initializing;
+boolean centralConnected = false;
 
 const unsigned long idleTime = 10000;             // Time to spend in idle in mS
 const int watchdogTimeout = 16384;                // max timeout is 16.384 S
@@ -117,235 +121,8 @@ const unsigned int displayModePin = 2;
 volatile int displayPage = 0;
 const int maxDisplayPages = 3;
 
-void setup() {
-  
-  Serial.begin(115200);
-  delay(3000);     // Give serial a moment to start
- 
-  DEBUG_PRINTF("RESET Register = 0x%0x\n", PM->RCAUSE.reg);
-
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, HIGH);
-
-  // Initialize our global configuration
-  updateGlobalConfiguration();
-  
-  Watchdog.enable(watchdogTimeout);
-
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    DEBUG_PRINTF("Error initializing OLED display\n");
-  }
-
-  DEBUG_PRINTF("Starting BLE\n");
-  while (!BLE.begin()) {
-    DEBUG_PRINTF("Error starting BLE\n");
-    delay(1000);
-  }
-
-  BLE.setLocalName(hostname);
-  configurationService.begin();
-  BLE.setAdvertisedService(configurationService.getConfigService());
-  BLE.advertise();
-  
-  now = millis();
-  lastMeasureTime = now;
-
-  currentState = initializing;
-  previousState = initializing;
-
-  // The ISR will switch between display pages
-  pinMode(displayModePin, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(displayModePin), displayModeISR, FALLING);
-
-  digitalWrite(LED_BUILTIN, LOW);
-
-  Watchdog.reset();
-
-}
-
-void loop() {
-
-  switch (currentState) {
-
-    case initializing:
-      // For for initialization
-      if (!configurationService.isInitialized) {
-        BLE.poll(idleTime);
-      } else {
-        // Complete the initialization
-        DEBUG_PRINTF("Completing the initialization\n");
-        BLE.disconnect();
-        BLE.end();
-        delay(1750);
-        updateGlobalConfiguration();
-        Watchdog.reset();
-        initializeRTC();
-        Watchdog.reset();
-        BLE.begin();
-        BLE.addService(configurationService.getConfigService());
-        BLE.setAdvertisedService(configurationService.getConfigService());
-        BLE.advertise();
-        nextState = start_scan;
-      }
-      break;
-      
-    case start_scan:
-      
-      BLE.scanForUuid(environmentServiceUUID);
-      scanStartTime = millis();
-      nextState = scanning;
-      break;
-  
-    case scanning:
-
-      BLE.poll();
-
-      sensorPeripheral = BLE.available();
-      digitalWrite(LED_BUILTIN, HIGH);
-
-      if (sensorPeripheral) {
-        digitalWrite(LED_BUILTIN, LOW);
-        nextState = connecting;
-      } else if (millis() - scanStartTime <= maxScanTime) {
-        nextState = scanning;
-      } else
-      {
-        digitalWrite(LED_BUILTIN, LOW);
-        nextState = idle;
-      }
-      
-      break;
-
-    case connecting:
-
-      BLE.poll();
-
-      DEBUG_PRINTF("=========================================================\n");
-      DEBUG_PRINTF("\tLocal Name: %s\n", sensorPeripheral.localName().c_str());
-      DEBUG_PRINTF("\tAddress: %s\n", sensorPeripheral.address().c_str());
-      DEBUG_PRINTF("\tRSSI: %d\n", sensorPeripheral.rssi());
-
-      connectedDeviceName = sensorPeripheral.localName();
-      
-      BLE.stopScan();   // we have to stop scanning before we can connect to a peripheral
-      
-      #ifdef _DEBUG_
-      // print the advertised service UUIDs, if present
-      if (sensorPeripheral.hasAdvertisedServiceUuid()) {
-        DEBUG_PRINTF("Advertised Service UUIDs: ");
-        for (int i = 0; i < sensorPeripheral.advertisedServiceUuidCount(); i++) {
-          DEBUG_PRINTF("%s, ", sensorPeripheral.advertisedServiceUuid(i).c_str());
-        }
-        DEBUG_PRINTF("\n");
-      }
-      #endif
-  
-      if (sensorPeripheral.connect()) {
-        nextState = connected;
-      } else {
-        nextState = start_scan;       // Restart the scan if we failed to connect.
-      }
-      break;
-
-    case connected:
-
-      BLE.poll();
-
-      if (sensorPeripheral.discoverService("181a")) {
-        nextState = reading_measurements;
-      } else {
-        nextState = start_scan;       // The environment service is missing so start the scan again.
-      }
-      break;
-
-    case reading_measurements:
-
-      BLE.poll();
-
-      readMeasurements();
-
-      // disconnect as we're finished reading.
-      sensorPeripheral.disconnect();
-
-      // disconnect and end BLE before starting the WiFi
-      BLE.disconnect();
-      BLE.end();
-      
-      delay(1750);      // Delay to allow the Nina radio module to reset
-
-      nextState = sending_measurements;
-      break;
-
-    case sending_measurements:
-
-      retryCounter = 0;
-      success = sendMeasurementsToMQTT();
-
-      while (!success && (retryCounter < maxTries)) {
-        Watchdog.reset();
-        delay(500 * (retryCounter + 1));
-        ++retryCounter;
-        success = sendMeasurementsToMQTT();
-      }
-
-      if (success) {
-        nextState = idle;
-      } else {
-        nextState = restart;
-      }
-
-      BLE.begin();
-      BLE.addService(configurationService.getConfigService());
-      BLE.setAdvertisedService(configurationService.getConfigService());
-      BLE.advertise();
-
-      break;
-
-    case idle:
-
-      DEBUG_PRINTF("Entering idle.\n");
-
-      startDelayTime = millis();
-
-      Watchdog.reset();
-
-      BLE.poll(idleTime);
-      
-      DEBUG_PRINTF("Waking from idle. Slept for %lu mS.  Restarting BLE.\n", millis() - startDelayTime);
-
-      Watchdog.reset();
-
-      nextState = start_scan;
-
-      break;
-
-    case restart:
-
-      DEBUG_PRINTF("Rebooting!\n");
-      Serial.flush();
-      delay(3000);  
-
-      NVIC_SystemReset();
-      break;
-  }
-
-  #ifdef _DEBUG_
-  if (nextState != currentState) {
-    DEBUG_PRINTF("Changing state from %s(%d) to %s(%d)\n", 
-      debugStateNames[currentState], currentState, 
-      debugStateNames[nextState], nextState);
-  }
-  #endif
-
-  oledDisplayPage(displayPage);
-  
-  previousState = currentState;
-  currentState = nextState;
-
-  Watchdog.reset();
-}
-
-
+/** @brief display information on the OLED display
+ *  @param page the page number to display */
 void oledDisplayPage(const unsigned int page) {
 
   char buffLine1[255], buffLine2[255];
@@ -375,7 +152,7 @@ void oledDisplayPage(const unsigned int page) {
 }
 
 
-// Initialize the RTC by calling NTP and setting the initial time in the RTC
+/** @brief Initialize the RTC by calling NTP and setting the initial time in the RTC */
 void initializeRTC() {
   int maxTries = 10;
   int tries = 0;
@@ -458,7 +235,7 @@ void initializeRTC() {
   WiFi.end(); 
 }
 
-
+/** @brief read the measurements for the BLE characteristics */
 void readMeasurements() {
     // Read the humidity
   humidityCharacteristic = sensorPeripheral.characteristic("2A6F");
@@ -506,9 +283,9 @@ void readMeasurements() {
   }
 }
 
-
+/** @brief send the measurements via mqtt
+ *  @return true if success */
 bool sendMeasurementsToMQTT() {
-  // We have a measurement so connect to WiFi and send it to the MQTT broker.
   bool status = false;
 
   DEBUG_PRINTF("Attempting to send measurement\n");
@@ -554,8 +331,8 @@ bool sendMeasurementsToMQTT() {
   return(status);
 }
 
+// Save the configuration service settings into the global variables.
 void updateGlobalConfiguration() {
-  // Save the configuration service settings into the global variables.
 
   strcpy(ssid, configurationService.ssid.c_str());
   strcpy(pass, configurationService.wifiPassword.c_str());
@@ -574,3 +351,285 @@ void displayModeISR() {
   }
   lastInterruptTime = interruptTime;
 }
+
+void onCentralConnected(BLEDevice central) {
+  DEBUG_PRINTF("Connection from: %s, rssi = %d, at %lu\n", central.address().c_str(), central.rssi(), millis());
+  DEBUG_PRINTF("  BLE Central = %s\n", BLE.central().address().c_str());
+  
+  if (BLE.central().address() != "00:00:00:00:00:00") {
+    DEBUG_PRINTF("  Connection from a central device\n");
+    centralConnected = true;
+    configurationPriorState = currentState;
+    previousState = currentState;
+    nextState = configurable;
+  }
+}
+
+void onCentralDisconnected(BLEDevice central) {
+  DEBUG_PRINTF("Disconnected from: %s, at %lu\n", central.address().c_str(), millis());
+  DEBUG_PRINTF("  BLE Central = %s\n", BLE.central().address().c_str());
+//  nextState = configurationPriorState;    // exit to the state before we became configurable
+//  previousState = configurable;
+}
+
+void setup() {
+  
+  Serial.begin(115200);
+  delay(3000);     // Give serial a moment to start
+ 
+  DEBUG_PRINTF("RESET Register = 0x%0x\n", PM->RCAUSE.reg);
+
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, HIGH);
+
+  // Initialize our global configuration
+  updateGlobalConfiguration();
+  
+  Watchdog.enable(watchdogTimeout);
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    DEBUG_PRINTF("Error initializing OLED display\n");
+  }
+
+  DEBUG_PRINTF("Starting BLE\n");
+  while (!BLE.begin()) {
+    DEBUG_PRINTF("Error starting BLE\n");
+    delay(1000);
+  }
+
+  BLE.setLocalName(hostname);
+  configurationService.begin();
+  BLE.setAdvertisedService(configurationService.getConfigService());
+  BLE.advertise();
+  
+  now = millis();
+  lastMeasureTime = now;
+
+  currentState = initializing;
+  previousState = initializing;
+
+  // The ISR will switch between display pages
+  pinMode(displayModePin, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(displayModePin), displayModeISR, FALLING);
+
+  digitalWrite(LED_BUILTIN, LOW);
+
+  Watchdog.reset();
+
+}
+
+void loop() {
+
+  switch (currentState) {
+
+    case initializing:
+      // For for initialization
+      if (!configurationService.isInitialized) {
+        BLE.poll(idleTime);
+      } else {
+        // Complete the initialization
+        DEBUG_PRINTF("Completing the initialization\n");
+        BLE.disconnect();
+        BLE.end();
+        delay(1750);
+        updateGlobalConfiguration();
+        Watchdog.reset();
+        initializeRTC();
+        Watchdog.reset();
+        BLE.begin();
+        BLE.addService(configurationService.getConfigService());
+        BLE.setAdvertisedService(configurationService.getConfigService());
+        BLE.advertise();
+
+        BLE.setEventHandler(BLEConnected, onCentralConnected);
+        BLE.setEventHandler(BLEDisconnected, onCentralDisconnected);
+            
+        nextState = start_scan;
+      }
+      break;
+
+    case configurable:
+      // This is a holding state that keeps the BLE connection alive.  We enter this state
+      // on a device connection and exit it on disconnect.
+      BLE.poll(idleTime); 
+      break;
+      
+    case start_scan:
+      
+      BLE.scanForUuid(environmentServiceUUID);
+      scanStartTime = millis();
+      nextState = scanning;
+      break;
+  
+    case scanning:
+
+      BLE.poll();
+
+      sensorPeripheral = BLE.available();
+      digitalWrite(LED_BUILTIN, HIGH);
+
+      if (sensorPeripheral) {
+        digitalWrite(LED_BUILTIN, LOW);
+        nextState = connecting;
+      } else if (millis() - scanStartTime <= maxScanTime) {
+        nextState = scanning;
+      } else
+      {
+        digitalWrite(LED_BUILTIN, LOW);
+        nextState = idle;
+      }
+      
+      break;
+
+    case connecting:
+
+      BLE.poll();
+
+      DEBUG_PRINTF("=========================================================\n");
+      DEBUG_PRINTF("\tLocal Name: %s\n", sensorPeripheral.localName().c_str());
+      DEBUG_PRINTF("\tAddress: %s\n", sensorPeripheral.address().c_str());
+      DEBUG_PRINTF("\tRSSI: %d\n", sensorPeripheral.rssi());
+
+      connectedDeviceName = sensorPeripheral.localName();
+      
+      BLE.stopScan();   // we have to stop scanning before we can connect to a peripheral
+      
+      #ifdef _DEBUG_
+      // print the advertised service UUIDs, if present
+      if (sensorPeripheral.hasAdvertisedServiceUuid()) {
+        DEBUG_PRINTF("Advertised Service UUIDs: ");
+        for (int i = 0; i < sensorPeripheral.advertisedServiceUuidCount(); i++) {
+          DEBUG_PRINTF("%s, ", sensorPeripheral.advertisedServiceUuid(i).c_str());
+        }
+        DEBUG_PRINTF("\n");
+      }
+      #endif
+  
+      if (sensorPeripheral.connect()) {
+        nextState = connected;
+      } else {
+        nextState = start_scan;       // Restart the scan if we failed to connect.
+      }
+      break;
+
+    case connected:
+
+      BLE.poll();
+
+      if (sensorPeripheral.discoverService("181a")) {
+        nextState = reading_measurements;
+      } else {
+        nextState = start_scan;       // The environment service is missing so start the scan again.
+      }
+      break;
+
+    case reading_measurements:
+
+      BLE.poll();
+
+      readMeasurements();
+
+      // disconnect as we're finished reading.
+      sensorPeripheral.disconnect();
+
+      // // disconnect and end BLE before starting the WiFi
+      // BLE.disconnect();
+      // BLE.end();
+      
+      // delay(1750);      // Delay to allow the Nina radio module to reset
+
+      nextState = sending_measurements;
+      break;
+
+    case sending_measurements:
+
+      // If a central device is connected do not send the measurement
+      if (BLE.central().address() != "00:00:00:00:00:00") {
+        DEBUG_PRINTF("A central device is connected so we're skipping sending this measurements.\n");
+        nextState = idle;     // force a change to idle
+      } else {
+
+        BLE.disconnect();
+        BLE.end();
+        
+        delay(1750);      // Delay to allow the Nina radio module to reset
+      
+        Watchdog.reset();
+
+        retryCounter = 0;
+        success = sendMeasurementsToMQTT();
+
+        while (!success && (retryCounter < maxTries)) {
+          Watchdog.reset();
+          delay(500 * (retryCounter + 1));
+          ++retryCounter;
+          success = sendMeasurementsToMQTT();
+        }
+
+        if (success) {
+          nextState = idle;
+        } else {
+          nextState = restart;
+        }
+
+        BLE.begin();
+        BLE.addService(configurationService.getConfigService());
+        BLE.setAdvertisedService(configurationService.getConfigService());
+        BLE.advertise();
+      }
+      
+      break;
+
+    case idle:
+
+      DEBUG_PRINTF("Entering idle.\n");
+
+      startDelayTime = millis();
+
+      Watchdog.reset();
+
+      BLE.poll(idleTime);
+      
+      DEBUG_PRINTF("Waking from idle. Slept for %lu mS.  Restarting BLE.\n", millis() - startDelayTime);
+
+      Watchdog.reset();
+
+      nextState = start_scan;
+
+      break;
+
+    case restart:
+
+      DEBUG_PRINTF("Rebooting!\n");
+      Serial.flush();
+      delay(3000);  
+
+      NVIC_SystemReset();
+      break;
+  }
+
+  #ifdef _DEBUG_
+  if (nextState != currentState) {
+    DEBUG_PRINTF("Changing state from %s(%d) to %s(%d)\n", 
+      debugStateNames[currentState], currentState, 
+      debugStateNames[nextState], nextState);
+  }
+  #endif
+
+  oledDisplayPage(displayPage);
+
+  previousState = currentState;
+  currentState = nextState;
+
+  // if (!centralConnected) {
+  //   previousState = currentState;
+  //   currentState = nextState;
+  // } else {
+  //   previousState = nextState;
+  //   currentState = configurable;
+  // }
+  
+  Watchdog.reset();
+}
+
+
