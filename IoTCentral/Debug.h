@@ -5,8 +5,8 @@
  * 
  */
 
-#ifndef __DEBUG_H__
-#define __DEBUG_H__
+#ifndef DEBUG_H
+#define DEBUG_H
 
 #ifdef _DEBUG_
 #define CDC_ENABLED
