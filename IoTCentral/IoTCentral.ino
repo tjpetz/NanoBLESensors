@@ -14,11 +14,9 @@
 #include <time.h>
 #include <ArduinoLowPower.h>
 #include <Adafruit_SleepyDog.h>
-#define NO_ADAFRUIT_SSD1306_COLOR_COMPATIBILITY
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
 
 #include "ConfigService.h"
+#include "PagingOLEDDisplay.h"
 
 #define _DEBUG_
 #include "Debug.h"
@@ -116,40 +114,42 @@ unsigned long maxScanTime = 30000;              // Time to scan before going idl
 unsigned long startDelayTime = 0;
 
 // the OLED display
-Adafruit_SSD1306 display(128, 32);
-const unsigned int displayModePin = 2;
-volatile int displayPage = 0;
-const int maxDisplayPages = 3;
+// Adafruit_SSD1306 display(128, 32);
+// const unsigned int displayModePin = 2;
+// volatile int displayPage = 0;
+// const int maxDisplayPages = 3;
 
-/** @brief display information on the OLED display
- *  @param page the page number to display */
-void oledDisplayPage(const unsigned int page) {
+PagingOLEDDisplay oledDisplay(128, 32, 2);
 
-  char buffLine1[255], buffLine2[255];
+// /** @brief display information on the OLED display
+//  *  @param page the page number to display */
+// void oledDisplayPage(const unsigned int page) {
+
+//   char buffLine1[255], buffLine2[255];
   
-  switch (page) {
-    case 0:
-      snprintf(buffLine1, 255, "State: %s -> %s\n", 
-        debugStateNames[currentState], debugStateNames[nextState]);
-      snprintf(buffLine2, 255, "%04d-%02d-%02d %02d:%02d:%02d\n", 
-        rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
-      break;
-    case 1:
-      snprintf(buffLine1, 255, "Host Name: %s", hostname);
-      snprintf(buffLine2, 255, "topic Root: %s", topicRoot); 
-      break;
-    default:
-      memset(buffLine1, 0, sizeof(buffLine1));
-      memset(buffLine2, 0, sizeof(buffLine1));
-  }
+//   switch (page) {
+//     case 0:
+//       snprintf(buffLine1, 255, "State: %s -> %s\n", 
+//         debugStateNames[currentState], debugStateNames[nextState]);
+//       snprintf(buffLine2, 255, "%04d-%02d-%02d %02d:%02d:%02d\n", 
+//         rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
+//       break;
+//     case 1:
+//       snprintf(buffLine1, 255, "Host Name: %s", hostname);
+//       snprintf(buffLine2, 255, "topic Root: %s", topicRoot); 
+//       break;
+//     default:
+//       memset(buffLine1, 0, sizeof(buffLine1));
+//       memset(buffLine2, 0, sizeof(buffLine1));
+//   }
 
-  display.clearDisplay();
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0, 0); display.print(buffLine1);
-  display.setCursor(0, 25); display.print(buffLine2);
-  display.display();
+//   display.clearDisplay();
+//   display.setTextColor(SSD1306_WHITE);
+//   display.setCursor(0, 0); display.print(buffLine1);
+//   display.setCursor(0, 25); display.print(buffLine2);
+//   display.display();
  
-}
+// }
 
 
 /** @brief Initialize the RTC by calling NTP and setting the initial time in the RTC */
@@ -341,16 +341,16 @@ void updateGlobalConfiguration() {
   strcpy(topicRoot, configurationService.topicRoot.c_str());
 }
 
-// Switch pages on the display when we receive an interrupt
-void displayModeISR() {
-  static unsigned long lastInterruptTime = 0;
-  unsigned long interruptTime = millis();
-  if (interruptTime - lastInterruptTime > 150) {
-    displayPage = (displayPage + 1) % maxDisplayPages;
-    oledDisplayPage(displayPage);  
-  }
-  lastInterruptTime = interruptTime;
-}
+// // Switch pages on the display when we receive an interrupt
+// void displayModeISR() {
+//   static unsigned long lastInterruptTime = 0;
+//   unsigned long interruptTime = millis();
+//   if (interruptTime - lastInterruptTime > 150) {
+//     displayPage = (displayPage + 1) % maxDisplayPages;
+//     oledDisplayPage(displayPage);  
+//   }
+//   lastInterruptTime = interruptTime;
+// }
 
 void onCentralConnected(BLEDevice central) {
   DEBUG_PRINTF("Connection from: %s, rssi = %d, at %lu\n", central.address().c_str(), central.rssi(), millis());
@@ -387,7 +387,7 @@ void setup() {
   
   Watchdog.enable(watchdogTimeout);
 
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+  if (!oledDisplay.begin()) {
     DEBUG_PRINTF("Error initializing OLED display\n");
   }
 
@@ -408,9 +408,9 @@ void setup() {
   currentState = initializing;
   previousState = initializing;
 
-  // The ISR will switch between display pages
-  pinMode(displayModePin, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(displayModePin), displayModeISR, FALLING);
+  // // The ISR will switch between display pages
+  // pinMode(displayModePin, INPUT_PULLUP);
+  // attachInterrupt(digitalPinToInterrupt(displayModePin), displayModeISR, FALLING);
 
   digitalWrite(LED_BUILTIN, LOW);
 
@@ -616,7 +616,14 @@ void loop() {
   }
   #endif
 
-  oledDisplayPage(displayPage);
+//  oledDisplayPage(displayPage);
+  snprintf(oledDisplay.displayBuffer_[0], 64, "State: %s -> %s\n", 
+    debugStateNames[currentState], debugStateNames[nextState]);
+  snprintf(oledDisplay.displayBuffer_[1], 64, "%04d-%02d-%02d %02d:%02d:%02d\n", 
+    rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
+  snprintf(oledDisplay.displayBuffer_[2], 64, "Host Name: %s", hostname);
+  snprintf(oledDisplay.displayBuffer_[3], 64, "topic Root: %s", topicRoot); 
+  oledDisplay.displayCurrentPage();
 
   previousState = currentState;
   currentState = nextState;
