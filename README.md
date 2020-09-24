@@ -16,8 +16,8 @@ be an additional small piece of fully functioning code.  My intent is to show ho
 IoTCentral is now configurable via BlueTooth.  The configuration is saved in flash memory and thus
 will survive a reboot.  I've included a .lua script for BlueSee that will allow for simple configuration
 of the device.  The statemachine is changed to support this capability.  In general the system will be
-a bluetooth device and only when it needs to send a measurement to mqtt will it shutdown bluetooth and 
-start Wifi.  To operate this way all Wifi activites have been moved to the send_measurement state.  In 
+a bluetooth device and only when it needs to send a measurement to mqtt will it shutdown bluetooth and
+start Wifi.  To operate this way all Wifi activites have been moved to the send_measurement state.  In
 the send measurement state a check is made to see if a Central device is connected.  If it is then we
 bypass sending the measurement as this would kill the central connection.
 
@@ -45,6 +45,16 @@ level via the standard BLE battery service.
 While I've include a .lua file for BlueSee to facilitate configuration this is not yet complete as it doesn't fully
 support the locking capability for the configuration.  I will update this in the next release when I convert the
 configuration service over to mirror the IoTCentral's approach.
+
+### BlueSee
+
+As mentioned I've created scripts for [BlueSee](https://www.synapse.com/bluesee).  While I've done something similar
+in my [SetWifiPoC](https://www.github.com/tjpetz/SetWifiPoC) project a key change in these new templates is a more
+scalable approach to handling various different settings without repetative coding.  Rather than create individual
+controls statically I've create functions to create controls dynamically.  Currently I have controls for strings
+and unsigned integers.  These functions can easily be reused.  It is simply a matter of invoking the function in
+the characteristic discovery callback function to create a control for each characteristic.  This approach is the
+same that is done in the standard controls for BlueSee.
 
 ### To Do
 
