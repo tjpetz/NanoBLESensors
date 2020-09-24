@@ -9,6 +9,54 @@ be an additional small piece of fully functioning code.  My intent is to show ho
 
 ## History
 
+## 24 Sep 2020
+
+### IotCentral
+
+IoTCentral is now configurable via BlueTooth.  The configuration is saved in flash memory and thus
+will survive a reboot.  I've included a .lua script for BlueSee that will allow for simple configuration
+of the device.  The statemachine is changed to support this capability.  In general the system will be
+a bluetooth device and only when it needs to send a measurement to mqtt will it shutdown bluetooth and 
+start Wifi.  To operate this way all Wifi activites have been moved to the send_measurement state.  In 
+the send measurement state a check is made to see if a Central device is connected.  If it is then we
+bypass sending the measurement as this would kill the central connection.
+
+A new class is added to manage the configuration settings via bluetooth.  This is an improvement over
+the method used to managed the BLEPeripheral configuation via bluetooth.  In a future revision I will
+convert the BLEPeripheral to use this new approach.
+
+I've added a small 128x32 OLED display to show basic state information.  I've created a simple class wrapper
+for the display.  It is in a very early state at this point in time and I expect to add several features in
+the near future.  One of the current features is support for pages on the display.  the display can be
+advanced from page to page with a simple push button tied to an i/o pin.  Pressing the button will cycle through
+the pages including a blank page that allows turning the display "off".
+
+### BLEPeripheral
+
+I've added a small 128x64 OLED display for status information.  This does not yet implement the same class or paging
+capability I currently have on the IoTCentral device.
+
+I'm starting to experiment with this board running off a battery.  Currently I use a 3.7v LiPo battery that feeds a
+boost converter to supply 5v to the VIN pin of the board.  To track the charge of the battery I've added a simple
+voltage divider circuit controlled via a mosfet.  The mosfet is trigger on and the voltage of the battery is then
+sampled via an analog input.  The BatteryMonitor class has been created to measure the battery and expose the charge
+level via the standard BLE battery service.
+
+While I've include a .lua file for BlueSee to facilitate configuration this is not yet complete as it doesn't fully
+support the locking capability for the configuration.  I will update this in the next release when I convert the
+configuration service over to mirror the IoTCentral's approach.
+
+### To Do
+
+The code is running and there significant changes.  However, while everything works there are several key refactoring
+items I will progress in the next release.
+
+- Convert BLEPeripheral to use the IoTCentral's class approach for managing configuraition information.
+- Convert BLEPeripheral to use the display class created for IoTCentral.
+- Clean up and better encapsulate the state based activities in IoTCentral.
+- Refactor the OLED display class into a library.
+- Refactor the BatteryMonitor class into a library.
+
 ## 26 Jun 2020
 
 A bit of code cleanup in IoTCentral along with the addition of a watchdog timer.
