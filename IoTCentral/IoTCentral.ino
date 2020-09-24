@@ -71,7 +71,6 @@ bool success = false;
 // State machine states
 typedef enum FSMStates {
     initializing,
-    configurable,
     start_scan,
     scanning,
     connecting,
@@ -83,9 +82,8 @@ typedef enum FSMStates {
 } FSMState_t;
 
 #ifdef _DEBUG_
-char debugStateNames [10][32] = {
+char debugStateNames [9][32] = {
   "initializing",                 // Initial state, wait here until configured by BLE.
-  "configurable",
   "start_scan", 
   "scanning", 
   "connecting", 
@@ -113,44 +111,7 @@ unsigned long maxScanTime = 30000;              // Time to scan before going idl
 
 unsigned long startDelayTime = 0;
 
-// the OLED display
-// Adafruit_SSD1306 display(128, 32);
-// const unsigned int displayModePin = 2;
-// volatile int displayPage = 0;
-// const int maxDisplayPages = 3;
-
-PagingOLEDDisplay oledDisplay(128, 32, 2);
-
-// /** @brief display information on the OLED display
-//  *  @param page the page number to display */
-// void oledDisplayPage(const unsigned int page) {
-
-//   char buffLine1[255], buffLine2[255];
-  
-//   switch (page) {
-//     case 0:
-//       snprintf(buffLine1, 255, "State: %s -> %s\n", 
-//         debugStateNames[currentState], debugStateNames[nextState]);
-//       snprintf(buffLine2, 255, "%04d-%02d-%02d %02d:%02d:%02d\n", 
-//         rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
-//       break;
-//     case 1:
-//       snprintf(buffLine1, 255, "Host Name: %s", hostname);
-//       snprintf(buffLine2, 255, "topic Root: %s", topicRoot); 
-//       break;
-//     default:
-//       memset(buffLine1, 0, sizeof(buffLine1));
-//       memset(buffLine2, 0, sizeof(buffLine1));
-//   }
-
-//   display.clearDisplay();
-//   display.setTextColor(SSD1306_WHITE);
-//   display.setCursor(0, 0); display.print(buffLine1);
-//   display.setCursor(0, 25); display.print(buffLine2);
-//   display.display();
- 
-// }
-
+PagingOLEDDisplay oledDisplay(128, 32, 4, 2);      
 
 /** @brief Initialize the RTC by calling NTP and setting the initial time in the RTC */
 void initializeRTC() {
@@ -341,35 +302,14 @@ void updateGlobalConfiguration() {
   strcpy(topicRoot, configurationService.topicRoot.c_str());
 }
 
-// // Switch pages on the display when we receive an interrupt
-// void displayModeISR() {
-//   static unsigned long lastInterruptTime = 0;
-//   unsigned long interruptTime = millis();
-//   if (interruptTime - lastInterruptTime > 150) {
-//     displayPage = (displayPage + 1) % maxDisplayPages;
-//     oledDisplayPage(displayPage);  
-//   }
-//   lastInterruptTime = interruptTime;
-// }
-
 void onCentralConnected(BLEDevice central) {
   DEBUG_PRINTF("Connection from: %s, rssi = %d, at %lu\n", central.address().c_str(), central.rssi(), millis());
   DEBUG_PRINTF("  BLE Central = %s\n", BLE.central().address().c_str());
-  
-  if (BLE.central().address() != "00:00:00:00:00:00") {
-    DEBUG_PRINTF("  Connection from a central device\n");
-    centralConnected = true;
-    configurationPriorState = currentState;
-    previousState = currentState;
-    nextState = configurable;
-  }
 }
 
 void onCentralDisconnected(BLEDevice central) {
   DEBUG_PRINTF("Disconnected from: %s, at %lu\n", central.address().c_str(), millis());
   DEBUG_PRINTF("  BLE Central = %s\n", BLE.central().address().c_str());
-//  nextState = configurationPriorState;    // exit to the state before we became configurable
-//  previousState = configurable;
 }
 
 void setup() {
@@ -408,10 +348,6 @@ void setup() {
   currentState = initializing;
   previousState = initializing;
 
-  // // The ISR will switch between display pages
-  // pinMode(displayModePin, INPUT_PULLUP);
-  // attachInterrupt(digitalPinToInterrupt(displayModePin), displayModeISR, FALLING);
-
   digitalWrite(LED_BUILTIN, LOW);
 
   Watchdog.reset();
@@ -448,12 +384,6 @@ void loop() {
       }
       break;
 
-    case configurable:
-      // This is a holding state that keeps the BLE connection alive.  We enter this state
-      // on a device connection and exit it on disconnect.
-      BLE.poll(idleTime); 
-      break;
-      
     case start_scan:
       
       BLE.scanForUuid(environmentServiceUUID);
@@ -531,12 +461,6 @@ void loop() {
 
       // disconnect as we're finished reading.
       sensorPeripheral.disconnect();
-
-      // // disconnect and end BLE before starting the WiFi
-      // BLE.disconnect();
-      // BLE.end();
-      
-      // delay(1750);      // Delay to allow the Nina radio module to reset
 
       nextState = sending_measurements;
       break;
@@ -616,27 +540,15 @@ void loop() {
   }
   #endif
 
-//  oledDisplayPage(displayPage);
-  snprintf(oledDisplay.displayBuffer_[0], 64, "State: %s -> %s\n", 
-    debugStateNames[currentState], debugStateNames[nextState]);
-  snprintf(oledDisplay.displayBuffer_[1], 64, "%04d-%02d-%02d %02d:%02d:%02d\n", 
+  oledDisplay.printf(0, "State: %s -> %s\n", debugStateNames[currentState], debugStateNames[nextState]);
+  oledDisplay.printf(1, "%04d-%02d-%02d %02d:%02d:%02d\n", 
     rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
-  snprintf(oledDisplay.displayBuffer_[2], 64, "Host Name: %s", hostname);
-  snprintf(oledDisplay.displayBuffer_[3], 64, "topic Root: %s", topicRoot); 
+  oledDisplay.printf(2, "Host Name: %s", hostname);
+  oledDisplay.printf(3, "topic Root: %s", topicRoot); 
   oledDisplay.displayCurrentPage();
 
   previousState = currentState;
   currentState = nextState;
 
-  // if (!centralConnected) {
-  //   previousState = currentState;
-  //   currentState = nextState;
-  // } else {
-  //   previousState = nextState;
-  //   currentState = configurable;
-  // }
-  
   Watchdog.reset();
 }
-
-
