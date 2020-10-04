@@ -38,7 +38,9 @@
 arduino_secret.h
 
 # Keep local config files out of Git
-**/.vscode/*
+**/.vscode/.*
+*.code-workspace
 
 # Keep intermediate build files out of Git
-build/*
+**/build/*
+

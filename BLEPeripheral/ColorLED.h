@@ -3,7 +3,8 @@
 
 #include <Arduino.h>
 
-typedef enum {
+typedef enum
+{
   BLACK = 0x000000,
   RED = 0xff0000,
   YELLOW = 0xffff00,
@@ -14,18 +15,19 @@ typedef enum {
   WHITE = 0xffffff
 } LEDColors;
 
-class rgbLED {
-  public:
-    rgbLED();
-    void setColor(const uint8_t r, const uint8_t g, const uint8_t b);
-    void setColor(const uint32_t rgb);
-    void turnOff();
-    void turnOn();
-  
-  private:
-    uint8_t _r;
-    uint8_t _g;
-    uint8_t _b;    
+class RGBled
+{
+public:
+  RGBled();
+  void setColor(const uint8_t r, const uint8_t g, const uint8_t b);
+  void setColor(const uint32_t rgb);
+  void turnOff();
+  void turnOn();
+
+private:
+  uint8_t _r;
+  uint8_t _g;
+  uint8_t _b;
 };
 
 #endif
