@@ -44,3 +44,7 @@ arduino_secret.h
 # Keep intermediate build files out of Git
 **/build/*
 
+# Keep KiCAD libraries
+!**/KiCAD/*.lib
+
+**/KiCAD/*.sch-bak
