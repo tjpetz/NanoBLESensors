@@ -252,7 +252,8 @@ bool sendMeasurementsToMQTT() {
 
   if (WiFi.begin(config.ssid, config.wifiPassword) == WL_CONNECTED) {
 
-    DEBUG_PRINTF("Attempting to connect to the MQTT broker: %s\n", broker);
+    DEBUG_PRINTF("Attempting to connect to the MQTT broker: %s\n",
+                 config.mqttBroker);
 
     mqttClient.setConnectionTimeout(4000);
     if (!mqttClient.connect(config.mqttBroker, port)) {
