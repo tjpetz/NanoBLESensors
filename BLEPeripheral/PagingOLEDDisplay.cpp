@@ -1,7 +1,6 @@
 #include "PagingOLEDDisplay.h"
 #include <stdarg.h>
 
-#define _DEBUG_
 #include "Debug.h"
 
 static PagingOLEDDisplay *singletonDisplay;

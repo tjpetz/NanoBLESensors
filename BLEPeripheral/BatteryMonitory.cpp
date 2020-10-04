@@ -19,11 +19,9 @@ void BatteryMonitor::begin() {
 
   batteryService_.addCharacteristic(batteryLevelCharacteristic_);
   batteryLevelCharacteristic_.writeValue(batteryPct(currentVoltage_));
-
-  BLE.addService(batteryService_);
 }
 
-BLEService& BatteryMonitor::getBatteryService() {
+BLEService& BatteryMonitor::getService() {
   return batteryService_;
 }
 

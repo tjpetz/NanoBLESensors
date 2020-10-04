@@ -1,70 +1,33 @@
 /*
- * Experiment with BLE.  In this sketch will simply publish the various sensor values
- * available on the Nano 33 BLE Sense.  Note, this is not secure as we simply allow any
- * client to register and receive the values.
- * 
- * Future will look to add security so that clients must register.  Also we'll look
- * to add low power to the code so that it goes into deep sleep and only periodically
- * wakes up.
- * 
+ * Experiment with BLE.  In this sketch will simply publish the various sensor
+ * values available on the Nano 33 BLE Sense.  Note, this is not secure as we
+ * simply allow any client to register and receive the values.
+ *
+ * Future will look to add security so that clients must register.  Also we'll
+ * look to add low power to the code so that it goes into deep sleep and only
+ * periodically wakes up.
+ *
  * History:
  *  8 Mar 2019 - Adding capabilities to configure the device via BLE
  *  8 Dec 2019 19:00Z - Added the temperature as a second characteristic.
  */
 
+#include <Arduino.h>
 #include <ArduinoBLE.h>
-#include <Arduino_HTS221.h>
-#include <Arduino_LPS22HB.h>
-#define NO_ADAFRUIT_SSD1306_COLOR_COMPATIBILITY
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
 
-#define _DEBUG_
-
-#include "Debug.h"
-#include "ColorLED.h"
 #include "BLEConfigure.h"
-#include "Watchdog.h"
+#include "BLEEnvironmentMonitor.h"
 #include "BatteryMonitor.h"
+#include "ColorLED.h"
+#include "Debug.h"
+#include "PagingOLEDDisplay.h"
+#include "Watchdog.h"
 
-// These globals are configurable over BLE, we choose reasonable defaults
-String sensorName;
-String sensorLocation;
-uint16_t humidityGreenLimit;     // Green for less than or equal to
-uint16_t humidityAmberLimit;     // Amber for greater than green and less than or equal to
+long previousMillis = 0; // last time the environment was checked (mS)
 
-// Default configuration information, this is stored in flash memory
-extern const flash_config_t flashConfig __attribute__ ((aligned(0x1000))) =
-{
-    "NanoBLESense",         // sensorName
-    "Location",             // location
-    4500,                   // green humidity limit
-    6500,                   // amber humidity limit
-    ""                      // lock password is empty by default
-};
-
-// BLE Environment Service
-BLEService environmentService("181A");
-
-// BLE Location Name
-BLEStringCharacteristic locationNameCharacteristic("2AB5", BLERead | BLENotify, 128);
-
-// BLE Humidity and Temperarture Characterists
-BLEUnsignedIntCharacteristic humidityCharacteristic("2A6F", BLERead | BLENotify);  // standard 16-bit UUID and remote client may read.
-BLEIntCharacteristic temperatureCharacteristic("2A6E", BLERead | BLENotify | BLEBroadcast);  // standard UUID for temp characteristic in C 0.01
-BLEUnsignedLongCharacteristic pressureCharacteristic("2A6D", BLERead | BLENotify); //standard UUID for pressure characteristinc in Pa 0.1
-
-// Most recent measurements
-uint16_t oldHumidity = 0;   // last humidity level
-int16_t oldTemperature = 0; // last temperature
-uint32_t oldPressure = 0;   // last pressure
-long previousMillis = 0;    // last time the environment was checked (mS)
-
-// save the name of the sensor so we can detect a change in the disconnect hander.
+// save the name of the sensor so we can detect a change in the disconnect
+// hander.
 String oldSensorName;
-
-// Use the onboard LEDs to signal humidity in range
-rgbLED led;
 
 // WDT will reset if we get hung in a loop
 const uint32_t watchdogTimeout = 60;
@@ -75,38 +38,32 @@ void on_BLECentralDisconnected(BLEDevice central);
 
 // counters for checking if we've lost connections
 uint32_t connPrevTime = 0;
-const int maxZeroRSSI = 10;       // this many times of zero measurement before reseting
+const int maxZeroRSSI =
+    10; // this many times of zero measurement before reseting
 int currentZeroRSSICount = 0;
-
-// the oled display
-Adafruit_SSD1306 display(128, 64);
 
 String lastCentralAddr = "";
 int lastCentralRSSI = 0;
 
-BatteryMonitor batteryMonitor(A0, D2);
+BatteryMonitor batteryMonitor(A0, D2); // BLE battery service
+BLEConfigure configuration;            // BLE configuration service
+BLEEnvironmentMonitor environmentMonitor("Location"); // BLE environment service
+
+PagingOLEDDisplay oledDisplay(128, 64, 7, D3); // the OLED display
+RGBled led; // onboard LEDs to signal humidity in range
 
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
-  
+
   initializeWDT(watchdogTimeout);
 
   Serial.begin(115200);
-  delay(1500);         // wait for serial to initialize but don't fail if there is no terminal.
+  delay(3000); // wait for serial to initialize but don't fail if there is no
+               // terminal.
 
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+  if (!oledDisplay.begin()) {
     DEBUG_PRINTF("Error initializing OLED display\n");
-  }
-  
-  while (!HTS.begin()) {
-    DEBUG_PRINTF("Error initializing HTS sensor\n");
-    delay(1000);
-  }
-
-  while (!BARO.begin()) {
-    DEBUG_PRINTF("Error intializing the LPS22HB sensor");
-    delay(1000);
   }
 
   while (!BLE.begin()) {
@@ -116,50 +73,32 @@ void setup() {
 
   resetWDT();
 
-  // Initialize the configuration from flash settings
-  sensorName = flashConfig.sensor_name;
-  sensorLocation = flashConfig.location;
-  humidityGreenLimit = flashConfig.humidityGreenLimit;
-  humidityAmberLimit = flashConfig.humidityAmberLimit;
+  DEBUG_PRINTF("sensorName = %s\n", configuration.sensorName);
+  DEBUG_PRINTF("sensorLocation = %s\n", configuration.location);
+  DEBUG_PRINTF("humidityGreenLimit = %d\n", configuration.humidityGreenLimit);
+  DEBUG_PRINTF("humidityAmberLimit = %d\n", configuration.humidityAmberLimit);
+  DEBUG_PRINTF("NRF_NVMC->READY = 0x%04lx\n", NRF_NVMC->READY);
 
-  DEBUG_PRINTF("sensorName = %s\n", sensorName.c_str());
-  DEBUG_PRINTF("sensorLocation = %s\n", sensorLocation.c_str());
-  DEBUG_PRINTF("humidityGreenLimit = %d\n", humidityGreenLimit);
-  DEBUG_PRINTF("humidityAmberLimit = %d\n", humidityAmberLimit);
-  DEBUG_PRINTF("flash address = 0x%08x\n", (unsigned int)&flashConfig);
-  DEBUG_PRINTF("NRF_NVMC->READY = 0x%04x\n", NRF_NVMC->READY);
-    
   // Configure the BLE settings
-  BLE.setLocalName(sensorName.c_str());
-  oldSensorName = sensorName;
-  environmentService.addCharacteristic(humidityCharacteristic);
-  environmentService.addCharacteristic(temperatureCharacteristic);
-  environmentService.addCharacteristic(pressureCharacteristic);
-  environmentService.addCharacteristic(locationNameCharacteristic);
+  BLE.setLocalName(configuration.sensorName);
+  oldSensorName = configuration.sensorName;
 
-  // Set the initial values
-  humidityCharacteristic.writeValue((uint16_t)(HTS.readHumidity() * 100));
-  temperatureCharacteristic.writeValue((int16_t)(HTS.readTemperature() * 100));
-  pressureCharacteristic.writeValue((uint32_t)(BARO.readPressure() * 10000));
-  locationNameCharacteristic.writeValue(sensorLocation);
-
-  // broadcast the temperature in the advertisement
-  temperatureCharacteristic.broadcast();
-  
-  config_configService();
-
+  // Start our BLE services.
+  configuration.begin();
   batteryMonitor.begin();
-  
+  environmentMonitor.begin();
+
+  BLE.addService(configuration.getService());
+  BLE.addService(environmentMonitor.getService());
+  BLE.addService(batteryMonitor.getService());
+
   // Add the service callbacks just so we can provide some debug messages
   BLE.setEventHandler(BLEConnected, on_BLECentralConnected);
   BLE.setEventHandler(BLEDisconnected, on_BLECentralDisconnected);
 
-  BLE.addService(configService);
-  BLE.addService(environmentService);
-
-  BLE.setAppearance(5696);      // Generic environmental sensor
-  BLE.setAdvertisedService(environmentService);
-  BLE.setAdvertisingInterval(400);    // Adversive every 250 mS = (400 * 0.625ms)
+  BLE.setAppearance(5696); // Generic environmental sensor
+  BLE.setAdvertisedService(environmentMonitor.getService());
+  BLE.setAdvertisingInterval(400); // Adversive every 250 mS = (400 * 0.625ms)
   BLE.advertise();
 
   DEBUG_PRINTF("BLE initialized, waiting for connections...\n");
@@ -173,63 +112,43 @@ void setup() {
   digitalWrite(LED_BUILTIN, LOW);
 }
 
-
 void loop() {
   // All the BLE connections will be handled via event handlers
   // Our loop must only monitor the sensors and update the characteristics
   // when they change
-  
-  uint16_t currentHumidity = 0;
-  int16_t currentTemperature = 0;
-  uint32_t currentPressure = 0;
 
   // We don't want to read the sensors at a greater frequency than 1Hz
   long currentMillis = millis();
   if (currentMillis - previousMillis >= 1000) {
-      previousMillis = currentMillis;
+    previousMillis = currentMillis;
 
-    // Update the humidity reading
-    currentHumidity = (uint16_t)(HTS.readHumidity() * 100);
-    if (currentHumidity != oldHumidity) {
-      humidityCharacteristic.writeValue(currentHumidity);
-      oldHumidity = currentHumidity;
-      if (currentHumidity <= humidityGreenLimit) {
-        led.setColor(0,25,0); // GREEN); 
-      } else if (currentHumidity <= humidityAmberLimit) {
-        led.setColor(25, 25, 0); // YELLOW); 
-      } else {
-        led.setColor(25, 0, 0); // RED); 
-      }
-    }
-  
-    // Update the temperature reading
-    currentTemperature = (int16_t)(HTS.readTemperature() * 100);
-    if (currentTemperature != oldTemperature) {
-      temperatureCharacteristic.writeValue(currentTemperature);
-      oldTemperature = currentTemperature;
-    }
-  
-    // Update the pressure reading, reading is in kPa and we need to report in 0.1 pa
-    currentPressure = (uint32_t)(BARO.readPressure() * 10000);
-    if (currentPressure != oldPressure) {
-      pressureCharacteristic.writeValue(currentPressure);
-      oldPressure = currentPressure;
+    environmentMonitor.measure();
+
+    if (environmentMonitor.humidity() <= configuration.humidityGreenLimit) {
+      led.setColor(0, 25, 0); // GREEN);
+    } else if (environmentMonitor.humidity() <=
+               configuration.humidityAmberLimit) {
+      led.setColor(25, 25, 0); // YELLOW);
+    } else {
+      led.setColor(25, 0, 0); // RED);
     }
 
     // Update the battery Voltage
-    batteryMonitor.measureVoltage();
-    
-    display.clearDisplay();
-    display.setTextColor(SSD1306_WHITE);
-    display.setCursor(0, 0); display.print("Temperature: "); display.print(currentTemperature / 100.0); display.print(" C");
-    display.setCursor(0, 11); display.print("Humidity: "); display.print(currentHumidity / 100.0); display.print(" % RH");
-    display.setCursor(0, 22); display.print("Pressure: "); display.print(currentPressure / 10.0 / 3386.389); display.print(" inHg");
-    display.setCursor(0, 33); display.print("Name: "); display.print(sensorName);
-    display.setCursor(0, 44); display.print("Location: "); display.print(sensorLocation);
-    display.setCursor(0, 55); display.print(lastCentralAddr); // display.print(" at "); display.print(lastCentralRSSI);
-    display.display();
+    float currentVoltage = batteryMonitor.measureVoltage();
+
+    oledDisplay.printf(0, "Temperature: %0.2f C",
+                       environmentMonitor.temperature() / 100.0);
+    oledDisplay.printf(1, "Humidity: %0.2f % RH",
+                       environmentMonitor.humidity() / 100.0);
+    oledDisplay.printf(2, "Pressure: %0.2f inHg",
+                       environmentMonitor.pressure() / 10.0 / 3386.389);
+    oledDisplay.printf(3, "Name: %s", configuration.sensorName);
+    oledDisplay.printf(4, "Location: %s", configuration.location);
+    oledDisplay.printf(5, "Ad: %s", lastCentralAddr.c_str());
+    oledDisplay.printf(6, "Battery: %0.2f v", currentVoltage);
+    oledDisplay.displayCurrentPage();
   }
-  
+
   BLE.poll();
   resetWDT();
 
@@ -245,7 +164,8 @@ void loop() {
     BLEDevice central = BLE.central();
 
     if (central) {
-      DEBUG_PRINTF("central RSSI = %d, zeroRSSIcount = %d\n", central.rssi(), currentZeroRSSICount);
+      DEBUG_PRINTF("central RSSI = %d, zeroRSSIcount = %d\n", central.rssi(),
+                   currentZeroRSSICount);
       if (central.connected()) {
         if (central.rssi() < 0) {
           // legit signal so reset the zero counters
@@ -265,22 +185,24 @@ void loop() {
 }
 
 void on_BLECentralConnected(BLEDevice central) {
-  DEBUG_PRINTF("Connection from: %s, rssi = %d, at %lu\n", central.address().c_str(), central.rssi(), millis());
+  DEBUG_PRINTF("Connection from: %s, rssi = %d, at %lu\n",
+               central.address().c_str(), central.rssi(), millis());
   lastCentralAddr = central.address();
   lastCentralRSSI = central.rssi();
-  digitalWrite(LED_BUILTIN, HIGH); 
+  digitalWrite(LED_BUILTIN, HIGH);
   BLE.stopAdvertise(); // Don't advertise while connected.
 }
 
 void on_BLECentralDisconnected(BLEDevice central) {
-  DEBUG_PRINTF("Disconnected from: %s, at %lu\n", central.address().c_str(), millis());
+  DEBUG_PRINTF("Disconnected from: %s, at %lu\n", central.address().c_str(),
+               millis());
   digitalWrite(LED_BUILTIN, LOW);
-  if (oldSensorName != sensorName) {
-    DEBUG_PRINTF("Setting new sensor name = %s\n", sensorName.c_str());
-    // the sensor name has changed, we need to update the name while the client is Disconnected
-    // and before we restart advertising.
-    BLE.setLocalName(sensorName.c_str());
-    oldSensorName = sensorName;
-  } 
-  BLE.advertise();  // Resume advertising.
+  if (oldSensorName != configuration.sensorName) {
+    DEBUG_PRINTF("Setting new sensor name = %s\n", configuration.sensorName);
+    // the sensor name has changed, we need to update the name while the client
+    // is Disconnected and before we restart advertising.
+    BLE.setLocalName(configuration.sensorName);
+    oldSensorName = configuration.sensorName;
+  }
+  BLE.advertise(); // Resume advertising.
 }

@@ -6,71 +6,78 @@
 #include <FlashAsEEPROM.h>
 
 typedef struct {
-  boolean valid;
-  char ssid[255];
-  char wifiPassword[255];
-  char hostName[255];
-  char mqttBroker[255];
-  char topicRoot[255];
+  int valid;
+  char ssid[64];
+  char wifiPassword[64];
+  char hostName[32];
+  char mqttBroker[64];
+  char topicRoot[64];
   unsigned int sampleInterval;
-  char configurationPassword[255];
+  char configurationPassword[64];
 } ConfigServiceEEPROM_t;
 
 FlashStorage(flash_configuration, ConfigServiceEEPROM_t);
 
-static ConfigService* singleton;        /** the one and only instance, used in the callbacks */
+static ConfigService
+    *singleton; /** the one and only instance, used in the callbacks */
 
 void onLock(BLEDevice central, BLECharacteristic characteristic);
 
-ConfigService::ConfigService(String p_hostName, String p_mqttBroker, String p_topicRoot, unsigned int p_sampleInterval)
-  : service_("44af2abf-f3d9-4429-bbb8-ec770f1e355a"),
-    ssidCharacteristic_("0465ac13-a0f3-46a6-990a-5a04b32b3b60", BLERead | BLEWrite, 255),
-    ssidDescriptor_("2901", "WiFi SSID"),
-    wifiPasswordCharacteristic_("27030384-eac9-4907-8e44-5c16d778aa7a", BLEWrite, 255),
-    wifiPasswordDescriptor_("2901", "WiFi Password"),
-    hostNameCharacteristic_("ef42bf97-1b9c-4d45-941d-d60dc564dc6f", BLERead | BLEWrite, 255),
-    hostNameDescriptor_("2901", "Host Name"),
-    mqttBrokerCharacteristic_("0d071785-b22b-49d6-86be-270de52da930", BLERead | BLEWrite, 255),
-    mqttBrokerDescriptor_("2901", "MQTT Address"),
-    topicRootCharacteristic_("18cda5b0-3b76-4319-9716-acd1a409d3f6", BLERead | BLEWrite, 255),
-    topicRootDescriptor_("2901", "MQTT Root Topic"),
-    sampleIntervalCharacteristic_("1682229f-bb5c-4f4a-96a9-1027f13d83f9", BLERead | BLEWrite),
-    sampleIntervalDescriptor_("2901", "Sample Interval in Seconds"),
-    isLockedCharacteristic_("d02db20e-6e1f-4541-bd3d-7715e00b2b82", BLERead | BLENotify),
-    lockCharacteristic_("29636a43-d59a-46a1-ad0a-34aa23a0e90c", BLEWrite, 255)
-{
-  hostName = p_hostName;
-  mqttBroker = p_mqttBroker;
-  topicRoot = p_topicRoot;
+ConfigService::ConfigService(const char *p_hostName, const char *p_mqttBroker,
+                             const char *p_topicRoot,
+                             unsigned int p_sampleInterval)
+    : service_("44af2abf-f3d9-4429-bbb8-ec770f1e355a"),
+      ssidCharacteristic_("0465ac13-a0f3-46a6-990a-5a04b32b3b60",
+                          BLERead | BLEWrite, sizeof(ssid)),
+      ssidDescriptor_("2901", "WiFi SSID"),
+      wifiPasswordCharacteristic_("27030384-eac9-4907-8e44-5c16d778aa7a",
+                                  BLEWrite, sizeof(wifiPassword)),
+      wifiPasswordDescriptor_("2901", "WiFi Password"),
+      hostNameCharacteristic_("ef42bf97-1b9c-4d45-941d-d60dc564dc6f",
+                              BLERead | BLEWrite, sizeof(hostName)),
+      hostNameDescriptor_("2901", "Host Name"),
+      mqttBrokerCharacteristic_("0d071785-b22b-49d6-86be-270de52da930",
+                                BLERead | BLEWrite, sizeof(mqttBroker)),
+      mqttBrokerDescriptor_("2901", "MQTT Address"),
+      topicRootCharacteristic_("18cda5b0-3b76-4319-9716-acd1a409d3f6",
+                               BLERead | BLEWrite, sizeof(topicRoot)),
+      topicRootDescriptor_("2901", "MQTT Root Topic"),
+      sampleIntervalCharacteristic_("1682229f-bb5c-4f4a-96a9-1027f13d83f9",
+                                    BLERead | BLEWrite),
+      sampleIntervalDescriptor_("2901", "Sample Interval in Seconds"),
+      isLockedCharacteristic_("d02db20e-6e1f-4541-bd3d-7715e00b2b82",
+                              BLERead | BLENotify),
+      lockCharacteristic_("29636a43-d59a-46a1-ad0a-34aa23a0e90c", BLEWrite,
+                          sizeof(configurationPassword)) {
+  strncpy(hostName, p_hostName, sizeof(hostName));
+  strncpy(mqttBroker, p_mqttBroker, sizeof(mqttBroker));
+  strncpy(topicRoot, p_topicRoot, sizeof(topicRoot));
   sampleInterval = p_sampleInterval;
 
   isInitialized = false;
-  configurationPassword = "";
+  memset(configurationPassword, 0, sizeof(configurationPassword));
   isLocked = false;
 
   ConfigServiceEEPROM_t flashConfig;
 
   flashConfig = flash_configuration.read();
-  if (flashConfig.valid) {
+  if (flashConfig.valid == 99) {
     // Load the config settings from flash
-    ssid = flashConfig.ssid;
-    wifiPassword = flashConfig.wifiPassword;
-    hostName = flashConfig.hostName;
-    mqttBroker = flashConfig.mqttBroker;
-    topicRoot = flashConfig.topicRoot;
+    strncpy(ssid, flashConfig.ssid, sizeof(ssid));
+    strncpy(wifiPassword, flashConfig.wifiPassword, sizeof(wifiPassword));
+    strncpy(hostName, flashConfig.hostName, sizeof(hostName));
+    strncpy(mqttBroker, flashConfig.mqttBroker, sizeof(mqttBroker));
+    strncpy(topicRoot, flashConfig.topicRoot, sizeof(topicRoot));
     sampleInterval = flashConfig.sampleInterval;
-    configurationPassword = flashConfig.configurationPassword;
+    strncpy(configurationPassword, flashConfig.configurationPassword,
+            sizeof(configurationPassword));
 
     isInitialized = true;
     isLocked = false;
   }
 }
 
-
-BLEService& ConfigService::getConfigService() {
-  return service_;
-}
-
+BLEService &ConfigService::getConfigService() { return service_; }
 
 void ConfigService::begin() {
 
@@ -85,15 +92,15 @@ void ConfigService::begin() {
 
   // set the initial values
   ssidCharacteristic_.writeValue("please set me");
-  hostNameCharacteristic_.writeValue(hostName.c_str());
-  mqttBrokerCharacteristic_.writeValue(mqttBroker.c_str());
-  topicRootCharacteristic_.writeValue(topicRoot.c_str());
+  hostNameCharacteristic_.writeValue(hostName);
+  mqttBrokerCharacteristic_.writeValue(mqttBroker);
+  topicRootCharacteristic_.writeValue(topicRoot);
   sampleIntervalCharacteristic_.writeValue(sampleInterval);
   isLockedCharacteristic_.writeValue(isLocked ? 1 : 0);
-  
+
   // Callbacks for lock and unlock
   lockCharacteristic_.setEventHandler(BLEWritten, onLock);
-  
+
   service_.addCharacteristic(ssidCharacteristic_);
   service_.addCharacteristic(wifiPasswordCharacteristic_);
   service_.addCharacteristic(hostNameCharacteristic_);
@@ -108,32 +115,56 @@ void ConfigService::begin() {
 
 void onLock(BLEDevice central, BLECharacteristic characteristic) {
   if (!singleton->isLocked) {
-    DEBUG_PRINTF("Configuration Locked with password = %s\n", singleton->lockCharacteristic_.value().c_str());
+    DEBUG_PRINTF("Configuration Locked with password = %s\n",
+                 singleton->lockCharacteristic_.value().c_str());
     singleton->isInitialized = true;
     singleton->isLocked = true;
-    singleton->configurationPassword = singleton->lockCharacteristic_.value();
-    singleton->ssid = singleton->ssidCharacteristic_.value();
-    singleton->wifiPassword = singleton->wifiPasswordCharacteristic_.value();
+    strncpy(singleton->configurationPassword,
+            singleton->lockCharacteristic_.value().c_str(),
+            sizeof(singleton->configurationPassword));
+    strncpy(singleton->ssid, singleton->ssidCharacteristic_.value().c_str(),
+            sizeof(singleton->ssid));
+    strncpy(singleton->wifiPassword,
+            singleton->wifiPasswordCharacteristic_.value().c_str(),
+            sizeof(singleton->wifiPassword));
     singleton->isLockedCharacteristic_.writeValue(1);
-    
+
     // Save the configuration to EEPROM
     ConfigServiceEEPROM_t flashConfig;
-  
+
     // Set the config object
-    flashConfig.valid = true;
-    strcpy(flashConfig.ssid, singleton->ssid.c_str());
-    strcpy(flashConfig.wifiPassword, singleton->wifiPassword.c_str());
-    strcpy(flashConfig.hostName, singleton->hostName.c_str());
-    strcpy(flashConfig.mqttBroker, singleton->mqttBroker.c_str());
-    strcpy(flashConfig.topicRoot, singleton->topicRoot.c_str());
+    flashConfig.valid = 99;
+    strncpy(flashConfig.ssid, singleton->ssid, sizeof(flashConfig.ssid));
+    strncpy(flashConfig.wifiPassword, singleton->wifiPassword,
+            sizeof(flashConfig.wifiPassword));
+    strncpy(flashConfig.hostName, singleton->hostName,
+            sizeof(flashConfig.hostName));
+    strncpy(flashConfig.mqttBroker, singleton->mqttBroker,
+            sizeof(flashConfig.mqttBroker));
+    strncpy(flashConfig.topicRoot, singleton->topicRoot,
+            sizeof(flashConfig.topicRoot));
     flashConfig.sampleInterval = singleton->sampleInterval;
-    strcpy(flashConfig.configurationPassword, singleton->configurationPassword.c_str());
+    strncpy(flashConfig.configurationPassword, singleton->configurationPassword,
+            sizeof(flashConfig.configurationPassword));
+
+    DEBUG_PRINTF("valid = %d\n", flashConfig.valid);
+    DEBUG_PRINTF("ssid = %s\n", flashConfig.ssid);
+    DEBUG_PRINTF("hostName = %s\n", flashConfig.hostName);
 
     flash_configuration.write(flashConfig);
-      
+
+    ConfigServiceEEPROM_t flashConfig2 = flash_configuration.read();
+
+    DEBUG_PRINTF("After flash and re-read\n");
+    DEBUG_PRINTF("valid = %d\n", flashConfig2.valid);
+    DEBUG_PRINTF("ssid = %s\n", flashConfig2.ssid);
+    DEBUG_PRINTF("hostName = %s\n", flashConfig2.hostName);
+
   } else {
-    if (singleton->lockCharacteristic_.value() == singleton->configurationPassword) {
-      DEBUG_PRINTF("Configuration Unlocked with password = %s\n", singleton->lockCharacteristic_.value().c_str());
+    if (singleton->lockCharacteristic_.value() ==
+        singleton->configurationPassword) {
+      DEBUG_PRINTF("Configuration Unlocked with password = %s\n",
+                   singleton->lockCharacteristic_.value().c_str());
       singleton->isLocked = false;
       singleton->isLockedCharacteristic_.writeValue(0);
     } else {

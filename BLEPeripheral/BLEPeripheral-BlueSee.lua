@@ -10,7 +10,6 @@ local sensorLocation_uuid = bluesee.UUID.new('52b8d6c4-cd20-4f51-bf71-ea0de788eb
 local humidityGreenLimit_uuid = bluesee.UUID.new('ebf92cf8-2744-4df2-be70-e856fcaf01a7')
 local humidityAmberLimit_uuid = bluesee.UUID.new('90441958-8975-4f62-aa13-08bdb86acd16')
 local configurationLock_uuid = bluesee.UUID.new('3ffb9262-18a2-4acf-918c-2f8932577c48')
-local configurationUnlock_uuid = bluesee.UUID.new('2b1823e7-2d41-46f8-98d8-fd830ffdd68e')
 local configurationIsLocked_uuid = bluesee.UUID.new('32b6a19f-ddac-45db-a1b5-8a7dbe9a76fc')
 
 function add_ReadWriteTextControl(span, title, ch)
@@ -156,10 +155,10 @@ bluesee.register_service(config_service_uuid, function(span)
             add_ReadWriteUnsignedIntegerControl(span, "Humidity Green Limit", ch)
         elseif ch.uuid == humidityAmberLimit_uuid then
             add_ReadWriteUnsignedIntegerControl(span, "Humidity Amber Limit", ch)
+        elseif ch.uuid == configurationIsLocked_uuid then
+            add_ReadWriteUnsignedIntegerControl(span, "Configuration Is Locked", ch)
         elseif ch.uuid == configurationLock_uuid then
             add_ReadWriteTextControl(span, "Lock", ch)
-        elseif ch.uuid == configurationUnlock_uuid then
-            add_ReadWriteTextControl(span, "Unlock", ch)
         end
     end
 end

@@ -1,19 +1,18 @@
 /**
  * Read values from a Nano 33 BLE Sense board and send them to an mqtt broker
  * via WiFi.
- * 
- * Note as we cannot simultaneously connect the Wifi and BLE we will get a measurement
- * and then stop the BLE connection and connect to WiFi.
+ *
+ * Note as we cannot simultaneously connect the Wifi and BLE we will get a
+ * measurement and then stop the BLE connection and connect to WiFi.
  */
 
-#include <Arduino.h>
-#include <ArduinoMqttClient.h>
-#include <WiFiNINA.h>
-#include <ArduinoBLE.h>
-#include <RTCZero.h>
-#include <time.h>
-#include <ArduinoLowPower.h>
 #include <Adafruit_SleepyDog.h>
+#include <Arduino.h>
+#include <ArduinoBLE.h>
+#include <ArduinoMqttClient.h>
+#include <RTCZero.h>
+#include <WiFiNINA.h>
+#include <time.h>
 
 #include "ConfigService.h"
 #include "PagingOLEDDisplay.h"
@@ -21,36 +20,30 @@
 #define _DEBUG_
 #include "Debug.h"
 
-
-#define DEFAULT_HOSTNAME        "iot_central_001"
-#define DEFAULT_MQTTBROKER      "mqtt.bb.tjpetz.com"
-#define DEFAULT_MQTTROOTTOPIC   "tjpetz.com/sensor"
-#define DEFAULT_SAMPLEINTERVAL  60
+#define DEFAULT_HOSTNAME "iot_central_001"
+#define DEFAULT_MQTTBROKER "mqtt.bb.tjpetz.com"
+#define DEFAULT_MQTTROOTTOPIC "tjpetz.com/sensor"
+#define DEFAULT_SAMPLEINTERVAL 60
 
 // Configuration settings managed by BLE and Flash
-ConfigService configurationService(DEFAULT_HOSTNAME, 
-    DEFAULT_MQTTBROKER, 
-    DEFAULT_MQTTROOTTOPIC, 
-    DEFAULT_SAMPLEINTERVAL);        // Config settings with sensible defaults
+ConfigService
+    config(DEFAULT_HOSTNAME, DEFAULT_MQTTBROKER, DEFAULT_MQTTROOTTOPIC,
+           DEFAULT_SAMPLEINTERVAL); // Config settings with sensible defaults
 
-// WiFi and MQTT - configured via the ConfigService
-char ssid[255];     // your network SSID (name)
-char pass[255];     // your network password (use for WPA, or use as key for WEP)
-WiFiClient wifiClient;                  // Our wifi client
-MqttClient mqttClient(wifiClient);      // Our MQTT client
-const int mqttTxDelay = 2500;           // Time (mS) between the last call to mqtt and turning off the wifi.
-char broker[255];
+WiFiClient wifiClient;             // Our wifi client
+MqttClient mqttClient(wifiClient); // Our MQTT client
+const int mqttTxDelay =
+    2500; // Time (mS) between the last call to mqtt and turning off the wifi.
 const int port = 1883;
-char topicRoot[255];
 const unsigned int MAX_TOPIC_LENGTH = 255;
-char hostname[255];
-byte macAddress[6];               // MAC address of the Wifi which we'll use in reporting
+byte macAddress[6]; // MAC address of the Wifi which we'll use in reporting
 
-RTCZero rtc;                            // Real Time Clock so we can time stamp data
+RTCZero rtc; // Real Time Clock so we can time stamp data
 
 // The Nano 33 BLE Sense sensor and it's characteristics.
 BLEDevice sensorPeripheral;
-const char environmentServiceUUID[] = "181A";       // the standard UUID for the environment service
+const char environmentServiceUUID[] =
+    "181A"; // the standard UUID for the environment service
 BLECharacteristic humidityCharacteristic;
 BLECharacteristic temperatureCharacteristic;
 BLECharacteristic pressureCharacteristic;
@@ -63,57 +56,53 @@ float currentPressure = 0.0;
 String currentLocationName;
 String connectedDeviceName;
 
-// Retry counters
-const int maxTries = 10;             
-int retryCounter = 0;               // counter to keep track of failed connections
+const int maxTries = 10; // Retry counters
+int retryCounter = 0;    // counter to keep track of failed connections
 bool success = false;
 
 // State machine states
 typedef enum FSMStates {
-    initializing,
-    start_scan,
-    scanning,
-    connecting,
-    connected,
-    reading_measurements,
-    sending_measurements,
-    idle,
-    restart
+  initializing,
+  start_scan,
+  scanning,
+  connecting,
+  connected,
+  reading_measurements,
+  sending_measurements,
+  idle,
+  restart
 } FSMState_t;
 
-#ifdef _DEBUG_
-char debugStateNames [9][32] = {
-  "initializing",                 // Initial state, wait here until configured by BLE.
-  "start_scan", 
-  "scanning", 
-  "connecting", 
-  "connected", 
-  "reading_measurements", 
-  "sending_measurements",
-  "idle",
-  "restart" 
-};
-#endif
+char debugStateNames[9][32] = {
+    "initializing", // Initial state, wait here until configured by BLE.
+    "start_scan",
+    "scanning",
+    "connecting",
+    "connected",
+    "reading_measurements",
+    "sending_measurements",
+    "idle",
+    "restart"};
 
 FSMState_t currentState = initializing;
 FSMState_t nextState = initializing;
 FSMState_t previousState = initializing;
 FSMState_t configurationPriorState = initializing;
-boolean centralConnected = false;
 
-const unsigned long idleTime = 10000;             // Time to spend in idle in mS
-const int watchdogTimeout = 16384;                // max timeout is 16.384 S
+const unsigned long idleTime = 10000; // Time to spend in idle in mS
+const int watchdogTimeout = 16384;    // max timeout is 16.384 S
 
 unsigned long now = 0;
 unsigned long lastMeasureTime = 0;
 unsigned long scanStartTime = 0;
-unsigned long maxScanTime = 30000;              // Time to scan before going idle
+unsigned long maxScanTime = 30000; // Time to scan before going idle
 
 unsigned long startDelayTime = 0;
 
-PagingOLEDDisplay oledDisplay(128, 32, 4, 2);      
+PagingOLEDDisplay oledDisplay(128, 32, 4, 2);
 
-/** @brief Initialize the RTC by calling NTP and setting the initial time in the RTC */
+/** @brief Initialize the RTC by calling NTP and setting the initial time in the
+ * RTC */
 void initializeRTC() {
   int maxTries = 10;
   int tries = 0;
@@ -121,8 +110,10 @@ void initializeRTC() {
   DEBUG_PRINTF("Initializing the RTC via NTP\n");
   DEBUG_PRINTF("Starting WiFi for NTP Connection\n");
 
-  while ((WiFi.begin(ssid, pass) != WL_CONNECTED) && (tries < maxTries)) {
-    DEBUG_PRINTF("initializeRTC - Connection failed, reason = %d.\n", WiFi.reasonCode());
+  while ((WiFi.begin(config.ssid, config.wifiPassword) != WL_CONNECTED) &&
+         (tries < maxTries)) {
+    DEBUG_PRINTF("initializeRTC - Connection failed, reason = %d.\n",
+                 WiFi.reasonCode());
     tries++;
     WiFi.disconnect();
     WiFi.end();
@@ -131,17 +122,20 @@ void initializeRTC() {
   }
 
   if (WiFi.status() != WL_CONNECTED) {
-    DEBUG_PRINTF("Failed to connect to wifi after %d tries.  Rebooting!\n", tries);
+    DEBUG_PRINTF("Failed to connect to wifi after %d tries.  Rebooting!\n",
+                 tries);
     Serial.flush();
     delay(3000);
-    NVIC_SystemReset();    
+    NVIC_SystemReset();
   }
 
-  DEBUG_PRINTF("WiFi Connected, address = %d.%d.%d.%d\n", WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
+  DEBUG_PRINTF("WiFi Connected, address = %d.%d.%d.%d\n", WiFi.localIP()[0],
+               WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
 
   time_t ntpTime = WiFi.getTime();
 
-  // try a few times to get the time, it takes a moment to reach the NTP servers.
+  // try a few times to get the time, it takes a moment to reach the NTP
+  // servers.
   while (ntpTime == 0 && tries < maxTries) {
     ntpTime = WiFi.getTime();
     tries++;
@@ -159,29 +153,34 @@ void initializeRTC() {
     NVIC_SystemReset();
   }
 
-  struct tm* t = gmtime(&ntpTime);    // convert Unix epoch time to tm struct format
-  DEBUG_PRINTF("NTP Time = %04d-%02d-%02d %02d:%02d:%02d\n", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+  struct tm *t =
+      gmtime(&ntpTime); // convert Unix epoch time to tm struct format
+  DEBUG_PRINTF("NTP Time = %04d-%02d-%02d %02d:%02d:%02d\n", t->tm_year + 1900,
+               t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
 
   // Setup the RTC
   rtc.begin();
   rtc.setEpoch(ntpTime);
-  DEBUG_PRINTF("RTC Time = %04d-%02d-%02d %02d:%02d:%02d\n", rtc.getYear(), rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
+  DEBUG_PRINTF("RTC Time = %04d-%02d-%02d %02d:%02d:%02d\n", rtc.getYear(),
+               rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(),
+               rtc.getSeconds());
 
-  if(!mqttClient.connect(broker, port)) {
-      DEBUG_PRINTF("Error Connecting to mqtt broker\n");
+  if (!mqttClient.connect(config.mqttBroker, port)) {
+    DEBUG_PRINTF("Error Connecting to mqtt broker\n");
   } else {
     char topic[MAX_TOPIC_LENGTH];
-    snprintf(topic, sizeof(topic), "%s/%s/boot", topicRoot, hostname);
+    snprintf(topic, sizeof(topic), "%s/%s/boot", config.topicRoot,
+             config.hostName);
     DEBUG_PRINTF("Topic = %s\n", topic);
 
     char msg[128];
-    snprintf(msg, sizeof(msg), 
-      "{ \"boot\": \"%04d-%02d-%02dT%02d:%02d:%02d\", \"IP\": \"%d.%d.%d.%d\", \"rssi\": %d, \"reset_reason\": %0x }", 
-        rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds(),
-        WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3],
-        WiFi.RSSI(),
-        PM->RCAUSE.reg
-    ); 
+    snprintf(msg, sizeof(msg),
+             "{ \"boot\": \"%04d-%02d-%02dT%02d:%02d:%02d\", \"IP\": "
+             "\"%d.%d.%d.%d\", \"rssi\": %ld, \"reset_reason\": %0x }",
+             rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(),
+             rtc.getMinutes(), rtc.getSeconds(), WiFi.localIP()[0],
+             WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3],
+             WiFi.RSSI(), PM->RCAUSE.reg);
     DEBUG_PRINTF("Sending msg = %s\n", msg);
     mqttClient.beginMessage(topic);
     mqttClient.print(msg);
@@ -191,18 +190,18 @@ void initializeRTC() {
   }
 
   mqttClient.stop();
-   
+
   WiFi.disconnect();
-  WiFi.end(); 
+  WiFi.end();
 }
 
 /** @brief read the measurements for the BLE characteristics */
 void readMeasurements() {
-    // Read the humidity
+  // Read the humidity
   humidityCharacteristic = sensorPeripheral.characteristic("2A6F");
   if (humidityCharacteristic) {
     uint16_t humidityRawValue;
-    humidityCharacteristic.readValue(humidityRawValue); 
+    humidityCharacteristic.readValue(humidityRawValue);
     currentHumidity = humidityRawValue / 100.0;
     DEBUG_PRINTF("Humidity = %.2f %%\n", currentHumidity);
   } else {
@@ -235,7 +234,7 @@ void readMeasurements() {
   locationNameCharacteristic = sensorPeripheral.characteristic("2AB5");
   if (locationNameCharacteristic) {
     char buff[255];
-    memset(buff, 0, sizeof(buff));    // zero out the buffer.
+    memset(buff, 0, sizeof(buff)); // zero out the buffer.
     locationNameCharacteristic.readValue(buff, sizeof(buff));
     currentLocationName = buff;
     DEBUG_PRINTF("Location Name = %s\n", currentLocationName.c_str());
@@ -251,28 +250,36 @@ bool sendMeasurementsToMQTT() {
 
   DEBUG_PRINTF("Attempting to send measurement\n");
 
-  if (WiFi.begin(ssid, pass) == WL_CONNECTED) {
+  if (WiFi.begin(config.ssid, config.wifiPassword) == WL_CONNECTED) {
 
     DEBUG_PRINTF("Attempting to connect to the MQTT broker: %s\n", broker);
-  
+
     mqttClient.setConnectionTimeout(4000);
-    if (!mqttClient.connect(broker, port)) {
-      DEBUG_PRINTF("MQTT connection failed! Error code = %d\n", mqttClient.connectError());
+    if (!mqttClient.connect(config.mqttBroker, port)) {
+      DEBUG_PRINTF("MQTT connection failed! Error code = %d\n",
+                   mqttClient.connectError());
     } else {
       DEBUG_PRINTF("You're connected to the MQTT broker!\n");
 
       char topic[MAX_TOPIC_LENGTH];
 
-      snprintf(topic, sizeof(topic), "%s/%s/environment", topicRoot, connectedDeviceName.c_str());
+      snprintf(topic, sizeof(topic), "%s/%s/environment", config.topicRoot,
+               connectedDeviceName.c_str());
 
       DEBUG_PRINTF("Topic = %s\n", topic);
       mqttClient.beginMessage(topic);
-      char dateTime[20];
-      snprintf(dateTime, sizeof(dateTime), "%04d-%02d-%02dT%02d:%02d:%02d", rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
+      char dateTime[32];
+      snprintf(dateTime, sizeof(dateTime), "%04d-%02d-%02dT%02d:%02d:%02d",
+               rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(),
+               rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
       DEBUG_PRINTF("Sample Time = %s\n", dateTime);
       char msg[255];
-      snprintf(msg, sizeof(msg), "{ \"sensor\": \"%s\", \"location\": \"%s\", \"sampleTime\": \"%s\", \"temperature\": %.2f, \"humidity\": %.2f, \"pressure\": %.2f }", 
-        connectedDeviceName.c_str(), currentLocationName.c_str(), dateTime, currentTemperature, currentHumidity, currentPressure);
+      snprintf(
+          msg, sizeof(msg),
+          "{ \"sensor\": \"%s\", \"location\": \"%s\", \"sampleTime\": \"%s\", "
+          "\"temperature\": %.2f, \"humidity\": %.2f, \"pressure\": %.2f }",
+          connectedDeviceName.c_str(), currentLocationName.c_str(), dateTime,
+          currentTemperature, currentHumidity, currentPressure);
       DEBUG_PRINTF("Message = %s\n", msg);
       mqttClient.print(msg);
       mqttClient.endMessage();
@@ -280,8 +287,7 @@ bool sendMeasurementsToMQTT() {
     }
     mqttClient.stop();
     status = true;
-  } 
-  else {
+  } else {
     DEBUG_PRINTF("Error/timeout connecting to WiFi: %d\n", WiFi.reasonCode());
   }
 
@@ -289,42 +295,31 @@ bool sendMeasurementsToMQTT() {
   WiFi.disconnect();
   WiFi.end();
 
-  return(status);
-}
-
-// Save the configuration service settings into the global variables.
-void updateGlobalConfiguration() {
-
-  strcpy(ssid, configurationService.ssid.c_str());
-  strcpy(pass, configurationService.wifiPassword.c_str());
-  strcpy(hostname, configurationService.hostName.c_str());
-  strcpy(broker, configurationService.mqttBroker.c_str());
-  strcpy(topicRoot, configurationService.topicRoot.c_str());
+  return status;
 }
 
 void onCentralConnected(BLEDevice central) {
-  DEBUG_PRINTF("Connection from: %s, rssi = %d, at %lu\n", central.address().c_str(), central.rssi(), millis());
+  DEBUG_PRINTF("Connection from: %s, rssi = %d, at %lu\n",
+               central.address().c_str(), central.rssi(), millis());
   DEBUG_PRINTF("  BLE Central = %s\n", BLE.central().address().c_str());
 }
 
 void onCentralDisconnected(BLEDevice central) {
-  DEBUG_PRINTF("Disconnected from: %s, at %lu\n", central.address().c_str(), millis());
+  DEBUG_PRINTF("Disconnected from: %s, at %lu\n", central.address().c_str(),
+               millis());
   DEBUG_PRINTF("  BLE Central = %s\n", BLE.central().address().c_str());
 }
 
 void setup() {
-  
+
   Serial.begin(115200);
-  delay(3000);     // Give serial a moment to start
- 
+  delay(3000); // Give serial a moment to start
+
   DEBUG_PRINTF("RESET Register = 0x%0x\n", PM->RCAUSE.reg);
 
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
 
-  // Initialize our global configuration
-  updateGlobalConfiguration();
-  
   Watchdog.enable(watchdogTimeout);
 
   if (!oledDisplay.begin()) {
@@ -337,11 +332,11 @@ void setup() {
     delay(1000);
   }
 
-  BLE.setLocalName(hostname);
-  configurationService.begin();
-  BLE.setAdvertisedService(configurationService.getConfigService());
+  BLE.setLocalName(config.hostName);
+  config.begin();
+  BLE.setAdvertisedService(config.getConfigService());
   BLE.advertise();
-  
+
   now = millis();
   lastMeasureTime = now;
 
@@ -351,200 +346,203 @@ void setup() {
   digitalWrite(LED_BUILTIN, LOW);
 
   Watchdog.reset();
-
 }
 
 void loop() {
 
   switch (currentState) {
 
-    case initializing:
-      // For for initialization
-      if (!configurationService.isInitialized) {
-        BLE.poll(idleTime);
-      } else {
-        // Complete the initialization
-        DEBUG_PRINTF("Completing the initialization\n");
-        BLE.disconnect();
-        BLE.end();
-        delay(1750);
-        updateGlobalConfiguration();
-        Watchdog.reset();
-        initializeRTC();
-        Watchdog.reset();
-        BLE.begin();
-        BLE.addService(configurationService.getConfigService());
-        BLE.setAdvertisedService(configurationService.getConfigService());
-        BLE.advertise();
-
-        BLE.setEventHandler(BLEConnected, onCentralConnected);
-        BLE.setEventHandler(BLEDisconnected, onCentralDisconnected);
-            
-        nextState = start_scan;
-      }
-      break;
-
-    case start_scan:
-      
-      BLE.scanForUuid(environmentServiceUUID);
-      scanStartTime = millis();
-      nextState = scanning;
-      break;
-  
-    case scanning:
-
-      BLE.poll();
-
-      sensorPeripheral = BLE.available();
-      digitalWrite(LED_BUILTIN, HIGH);
-
-      if (sensorPeripheral) {
-        digitalWrite(LED_BUILTIN, LOW);
-        nextState = connecting;
-      } else if (millis() - scanStartTime <= maxScanTime) {
-        nextState = scanning;
-      } else
-      {
-        digitalWrite(LED_BUILTIN, LOW);
-        nextState = idle;
-      }
-      
-      break;
-
-    case connecting:
-
-      BLE.poll();
-
-      DEBUG_PRINTF("=========================================================\n");
-      DEBUG_PRINTF("\tLocal Name: %s\n", sensorPeripheral.localName().c_str());
-      DEBUG_PRINTF("\tAddress: %s\n", sensorPeripheral.address().c_str());
-      DEBUG_PRINTF("\tRSSI: %d\n", sensorPeripheral.rssi());
-
-      connectedDeviceName = sensorPeripheral.localName();
-      
-      BLE.stopScan();   // we have to stop scanning before we can connect to a peripheral
-      
-      #ifdef _DEBUG_
-      // print the advertised service UUIDs, if present
-      if (sensorPeripheral.hasAdvertisedServiceUuid()) {
-        DEBUG_PRINTF("Advertised Service UUIDs: ");
-        for (int i = 0; i < sensorPeripheral.advertisedServiceUuidCount(); i++) {
-          DEBUG_PRINTF("%s, ", sensorPeripheral.advertisedServiceUuid(i).c_str());
-        }
-        DEBUG_PRINTF("\n");
-      }
-      #endif
-  
-      if (sensorPeripheral.connect()) {
-        nextState = connected;
-      } else {
-        nextState = start_scan;       // Restart the scan if we failed to connect.
-      }
-      break;
-
-    case connected:
-
-      BLE.poll();
-
-      if (sensorPeripheral.discoverService("181a")) {
-        nextState = reading_measurements;
-      } else {
-        nextState = start_scan;       // The environment service is missing so start the scan again.
-      }
-      break;
-
-    case reading_measurements:
-
-      BLE.poll();
-
-      readMeasurements();
-
-      // disconnect as we're finished reading.
-      sensorPeripheral.disconnect();
-
-      nextState = sending_measurements;
-      break;
-
-    case sending_measurements:
-
-      // If a central device is connected do not send the measurement
-      if (BLE.central().address() != "00:00:00:00:00:00") {
-        DEBUG_PRINTF("A central device is connected so we're skipping sending this measurements.\n");
-        nextState = idle;     // force a change to idle
-      } else {
-
-        BLE.disconnect();
-        BLE.end();
-        
-        delay(1750);      // Delay to allow the Nina radio module to reset
-      
-        Watchdog.reset();
-
-        retryCounter = 0;
-        success = sendMeasurementsToMQTT();
-
-        while (!success && (retryCounter < maxTries)) {
-          Watchdog.reset();
-          delay(500 * (retryCounter + 1));
-          ++retryCounter;
-          success = sendMeasurementsToMQTT();
-        }
-
-        if (success) {
-          nextState = idle;
-        } else {
-          nextState = restart;
-        }
-
-        BLE.begin();
-        BLE.addService(configurationService.getConfigService());
-        BLE.setAdvertisedService(configurationService.getConfigService());
-        BLE.advertise();
-      }
-      
-      break;
-
-    case idle:
-
-      DEBUG_PRINTF("Entering idle.\n");
-
-      startDelayTime = millis();
-
-      Watchdog.reset();
-
+  case initializing:
+    // For for initialization
+    if (!config.isInitialized) {
       BLE.poll(idleTime);
-      
-      DEBUG_PRINTF("Waking from idle. Slept for %lu mS.  Restarting BLE.\n", millis() - startDelayTime);
-
+    } else {
+      // Complete the initialization
+      DEBUG_PRINTF("Completing the initialization\n");
+      BLE.disconnect();
+      BLE.end();
+      delay(1750);
       Watchdog.reset();
+      initializeRTC();
+      Watchdog.reset();
+      BLE.begin();
+      BLE.addService(config.getConfigService());
+      BLE.setAdvertisedService(config.getConfigService());
+      BLE.advertise();
+
+      BLE.setEventHandler(BLEConnected, onCentralConnected);
+      BLE.setEventHandler(BLEDisconnected, onCentralDisconnected);
 
       nextState = start_scan;
+    }
+    break;
 
-      break;
+  case start_scan:
 
-    case restart:
+    BLE.scanForUuid(environmentServiceUUID);
+    scanStartTime = millis();
+    nextState = scanning;
+    break;
 
-      DEBUG_PRINTF("Rebooting!\n");
-      Serial.flush();
-      delay(3000);  
+  case scanning:
 
-      NVIC_SystemReset();
-      break;
+    BLE.poll();
+
+    sensorPeripheral = BLE.available();
+    digitalWrite(LED_BUILTIN, HIGH);
+
+    if (sensorPeripheral) {
+      digitalWrite(LED_BUILTIN, LOW);
+      nextState = connecting;
+    } else if (millis() - scanStartTime <= maxScanTime) {
+      nextState = scanning;
+    } else {
+      digitalWrite(LED_BUILTIN, LOW);
+      nextState = idle;
+    }
+
+    break;
+
+  case connecting:
+
+    BLE.poll();
+
+    DEBUG_PRINTF("=========================================================\n");
+    DEBUG_PRINTF("\tLocal Name: %s\n", sensorPeripheral.localName().c_str());
+    DEBUG_PRINTF("\tAddress: %s\n", sensorPeripheral.address().c_str());
+    DEBUG_PRINTF("\tRSSI: %d\n", sensorPeripheral.rssi());
+
+    connectedDeviceName = sensorPeripheral.localName();
+
+    BLE.stopScan(); // we have to stop scanning before we can connect to a
+                    // peripheral
+
+#ifdef _DEBUG_
+    // print the advertised service UUIDs, if present
+    if (sensorPeripheral.hasAdvertisedServiceUuid()) {
+      DEBUG_PRINTF("Advertised Service UUIDs: ");
+      for (int i = 0; i < sensorPeripheral.advertisedServiceUuidCount(); i++) {
+        DEBUG_PRINTF("%s, ", sensorPeripheral.advertisedServiceUuid(i).c_str());
+      }
+      DEBUG_PRINTF("\n");
+    }
+#endif
+
+    if (sensorPeripheral.connect()) {
+      nextState = connected;
+    } else {
+      nextState = start_scan; // Restart the scan if we failed to connect.
+    }
+    break;
+
+  case connected:
+
+    BLE.poll();
+
+    if (sensorPeripheral.discoverService("181a")) {
+      nextState = reading_measurements;
+    } else {
+      nextState = start_scan; // The environment service is missing so start the
+                              // scan again.
+    }
+    break;
+
+  case reading_measurements:
+
+    BLE.poll();
+
+    readMeasurements();
+
+    // disconnect as we're finished reading.
+    sensorPeripheral.disconnect();
+
+    nextState = sending_measurements;
+    break;
+
+  case sending_measurements:
+
+    // If a central device is connected do not send the measurement
+    if (BLE.central().address() != "00:00:00:00:00:00") {
+      DEBUG_PRINTF("A central device is connected so we're skipping sending "
+                   "this measurements.\n");
+      nextState = idle; // force a change to idle
+    } else {
+
+      BLE.disconnect();
+      BLE.end();
+
+      delay(1750); // Delay to allow the Nina radio module to reset
+
+      Watchdog.reset();
+
+      retryCounter = 0;
+      success = sendMeasurementsToMQTT();
+
+      while (!success && (retryCounter < maxTries)) {
+        Watchdog.reset();
+        delay(500 * (retryCounter + 1));
+        ++retryCounter;
+        success = sendMeasurementsToMQTT();
+      }
+
+      if (success) {
+        nextState = idle;
+      } else {
+        nextState = restart;
+      }
+
+      BLE.begin();
+      BLE.addService(config.getConfigService());
+      BLE.setAdvertisedService(config.getConfigService());
+      BLE.advertise();
+    }
+
+    break;
+
+  case idle:
+
+    DEBUG_PRINTF("Entering idle.\n");
+
+    startDelayTime = millis();
+
+    Watchdog.reset();
+
+    BLE.poll(idleTime);
+
+    DEBUG_PRINTF("Waking from idle. Slept for %lu mS.  Restarting BLE.\n",
+                 millis() - startDelayTime);
+
+    Watchdog.reset();
+
+    nextState = start_scan;
+
+    break;
+
+  case restart:
+
+    DEBUG_PRINTF("Rebooting!\n");
+    Serial.flush();
+    delay(3000);
+
+    NVIC_SystemReset();
+    break;
   }
 
-  #ifdef _DEBUG_
+#ifdef _DEBUG_
   if (nextState != currentState) {
-    DEBUG_PRINTF("Changing state from %s(%d) to %s(%d)\n", 
-      debugStateNames[currentState], currentState, 
-      debugStateNames[nextState], nextState);
+    DEBUG_PRINTF("Changing state from %s(%d) to %s(%d)\n",
+                 debugStateNames[currentState], currentState,
+                 debugStateNames[nextState], nextState);
   }
-  #endif
+#endif
 
-  oledDisplay.printf(0, "State: %s -> %s\n", debugStateNames[currentState], debugStateNames[nextState]);
-  oledDisplay.printf(1, "%04d-%02d-%02d %02d:%02d:%02d\n", 
-    rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
-  oledDisplay.printf(2, "Host Name: %s", hostname);
-  oledDisplay.printf(3, "topic Root: %s", topicRoot); 
+  oledDisplay.printf(0, "State: %s -> %s\n", debugStateNames[currentState],
+                     debugStateNames[nextState]);
+  oledDisplay.printf(1, "%04d-%02d-%02d %02d:%02d:%02d\n", rtc.getYear() + 2000,
+                     rtc.getMonth(), rtc.getDay(), rtc.getHours(),
+                     rtc.getMinutes(), rtc.getSeconds());
+  oledDisplay.printf(2, "Host Name: %s", config.hostName);
+  oledDisplay.printf(3, "topic Root: %s", config.topicRoot);
   oledDisplay.displayCurrentPage();
 
   previousState = currentState;

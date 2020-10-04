@@ -41,4 +41,4 @@ arduino_secret.h
 **/.vscode/*
 
 # Keep intermediate build files out of Git
-build/*
+**/build/*

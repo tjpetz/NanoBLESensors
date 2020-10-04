@@ -1,6 +1,7 @@
 #include "ColorLED.h"
 
-rgbLED::rgbLED() {
+RGBled::RGBled()
+{
   _r = 0;
   _g = 0;
   _b = 0;
@@ -12,7 +13,8 @@ rgbLED::rgbLED() {
   turnOff();
 }
 
-void rgbLED::setColor(const uint8_t r, const uint8_t g, const uint8_t b) {
+void RGBled::setColor(const uint8_t r, const uint8_t g, const uint8_t b)
+{
   _r = r;
   _g = g;
   _b = b;
@@ -22,7 +24,8 @@ void rgbLED::setColor(const uint8_t r, const uint8_t g, const uint8_t b) {
   analogWrite(LEDB, 255 - _b);
 }
 
-void rgbLED::setColor(const uint32_t rgb) {
+void RGBled::setColor(const uint32_t rgb)
+{
   // break out the components from the unsigned long
   _r = (0xFF0000 & rgb) >> 16;
   _g = (0x00FF00 & rgb) >> 8;
@@ -33,14 +36,16 @@ void rgbLED::setColor(const uint32_t rgb) {
   analogWrite(LEDB, 255 - _b);
 }
 
-void rgbLED::turnOff() {
+void RGBled::turnOff()
+{
   digitalWrite(LEDR, HIGH);
   digitalWrite(LEDG, HIGH);
   digitalWrite(LEDB, HIGH);
 }
 
-void rgbLED::turnOn() {
+void RGBled::turnOn()
+{
   analogWrite(LEDR, 255 - _r);
   analogWrite(LEDG, 255 - _g);
-  analogWrite(LEDB, 255 - _b);  
+  analogWrite(LEDB, 255 - _b);
 }

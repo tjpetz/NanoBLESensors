@@ -1,6 +1,7 @@
 #ifndef _BatteryMonitor_h_
 #define _BatteryMonitor_h_
 
+#include <Arduino.h>
 #include <ArduinoBLE.h>
 
 /*
@@ -21,7 +22,7 @@ class BatteryMonitor {
     float measureVoltage();
 
     /** @brief return a reference to the battery service. */
-    BLEService& getBatteryService();
+    BLEService& getService();
   
   private:
     float currentVoltage_;
