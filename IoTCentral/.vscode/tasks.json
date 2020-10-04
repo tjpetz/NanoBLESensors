@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "type": "shell",
+      "label": "Arduino CLI compile current file",
+      "command": "arduino-cli compile -b arduino:samd:nano_33_iot -v",
+      "problemMatcher": ["$gcc"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "type": "shell",
+      "label": "Upload current sketch",
+      "command": "arduino-cli upload -b arduino:samd:nano_33_iot -p /dev/cu.usbmodem14101 -t -i build/arduino.samd.nano_33_iot/${workspaceFolderBasename}.ino.elf",
+      "problemMatcher": []
+    }
+  ],
+  "version": "2.0.0"
+}

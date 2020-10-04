@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "type": "shell",
+      "label": "Arduino CLI compile current file",
+      "command": "arduino-cli compile -b arduino:mbed:nano33ble -v",
+      "problemMatcher": ["$gcc"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "type": "shell",
+      "label": "Upload current sketch",
+      "command": "arduino-cli upload -b arduino:mbed:nano33ble -p /dev/cu.usbmodem14101 -t -i build/arduino.mbed.nano33ble/${workspaceFolderBasename}.ino.elf",
+      "problemMatcher": []
+    }
+  ],
+  "version": "2.0.0"
+}
