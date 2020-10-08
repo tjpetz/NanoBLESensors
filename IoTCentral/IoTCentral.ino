@@ -74,15 +74,8 @@ typedef enum FSMStates {
 } FSMState_t;
 
 char debugStateNames[9][32] = {
-    "initializing", // Initial state, wait here until configured by BLE.
-    "start_scan",
-    "scanning",
-    "connecting",
-    "connected",
-    "reading_measurements",
-    "sending_measurements",
-    "idle",
-    "restart"};
+    "init", // Initial state, wait here until configured by BLE.
+    "str_scn", "scan", "cnctng", "cnctd", "rd_msr", "snd_msr", "idle", "rstrt"};
 
 FSMState_t currentState = initializing;
 FSMState_t nextState = initializing;
@@ -537,13 +530,13 @@ void loop() {
   }
 #endif
 
-  oledDisplay.printf(0, "State: %s -> %s\n", debugStateNames[currentState],
+  oledDisplay.printf(0, "St: %s -> %s", debugStateNames[currentState],
                      debugStateNames[nextState]);
-  oledDisplay.printf(1, "%04d-%02d-%02d %02d:%02d:%02d\n", rtc.getYear() + 2000,
+  oledDisplay.printf(1, "%04d-%02d-%02d %02d:%02d", rtc.getYear() + 2000,
                      rtc.getMonth(), rtc.getDay(), rtc.getHours(),
-                     rtc.getMinutes(), rtc.getSeconds());
-  oledDisplay.printf(2, "Host Name: %s", config.hostName);
-  oledDisplay.printf(3, "topic Root: %s", config.topicRoot);
+                     rtc.getMinutes());
+  oledDisplay.printf(2, "Host: %s", config.hostName);
+  oledDisplay.printf(3, "Topic: %s", config.topicRoot);
   oledDisplay.displayCurrentPage();
 
   previousState = currentState;
