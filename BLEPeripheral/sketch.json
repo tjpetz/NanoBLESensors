@@ -1,0 +1,7 @@
+{
+  "cpu": {
+    "fqbn": "arduino:mbed:nano33ble",
+    "name": "Arduino Nano 33 BLE",
+    "port": "serial:///dev/cu.usbmodem1433301"
+  }
+}

@@ -13,7 +13,7 @@
     {
       "type": "shell",
       "label": "Upload current sketch",
-      "command": "arduino-cli upload -b arduino:samd:nano_33_iot -p /dev/cu.usbmodem14101 -t -i build/arduino.samd.nano_33_iot/${workspaceFolderBasename}.ino.elf",
+      "command": "arduino-cli upload -t -i build/arduino.samd.nano_33_iot/${workspaceFolderBasename}.ino.elf",
       "problemMatcher": []
     }
   ],

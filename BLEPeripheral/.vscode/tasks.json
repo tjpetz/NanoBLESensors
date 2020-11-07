@@ -13,7 +13,7 @@
     {
       "type": "shell",
       "label": "Upload current sketch",
-      "command": "arduino-cli upload -b arduino:mbed:nano33ble -p /dev/cu.usbmodem14101 -t -i build/arduino.mbed.nano33ble/${workspaceFolderBasename}.ino.elf",
+      "command": "arduino-cli upload -t -i build/arduino.mbed.nano33ble/${workspaceFolderBasename}.ino.elf",
       "problemMatcher": []
     }
   ],

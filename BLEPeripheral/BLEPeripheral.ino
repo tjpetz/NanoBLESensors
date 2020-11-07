@@ -98,7 +98,7 @@ void setup() {
 
   BLE.setAppearance(5696); // Generic environmental sensor
   BLE.setAdvertisedService(environmentMonitor.getService());
-  BLE.setAdvertisingInterval(400); // Adversive every 250 mS = (400 * 0.625ms)
+  // BLE.setAdvertisingInterval(400); // Adversive every 250 mS = (400 * 0.625ms)
   BLE.advertise();
 
   DEBUG_PRINTF("BLE initialized, waiting for connections...\n");
@@ -190,7 +190,8 @@ void on_BLECentralConnected(BLEDevice central) {
   lastCentralAddr = central.address();
   lastCentralRSSI = central.rssi();
   digitalWrite(LED_BUILTIN, HIGH);
-  BLE.stopAdvertise(); // Don't advertise while connected.
+  // BLE.stopAdvertise(); // Don't advertise while connected.
+  BLE.advertise();
 }
 
 void on_BLECentralDisconnected(BLEDevice central) {
