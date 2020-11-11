@@ -316,7 +316,7 @@ void loop() {
       BLE.addService(config.getConfigService());
       BLE.setAdvertisedService(config.getConfigService());
       // After initialization we advertize less frequently to save power
-      BLE.setAdvertisingInterval(3200);     // Advertize ever 2000 ms (1000 / 0.625)
+      BLE.setAdvertisingInterval(3200);     // Advertize ever 2000 ms (2000 / 0.625)
       BLE.advertise();
 
       BLE.setEventHandler(BLEConnected, onCentralConnected);

@@ -1,5 +1,16 @@
 # History
 
+## 11 Nov 2020
+
+Refactored the Bluetooth services.  The ConfigService is now wrapped in
+an object as well as the EnvironmentSensor.  Corrected several bugs
+in the Configuration Service.  Extended the idle function to sleep
+for periods of time longer than the watchdog timeout.
+
+Added support to scan for multiple sensors.  During the scan period all
+sensors in range are identified.  Then after the scan period each sensor
+is accessed to get it's readings.
+
 ## 28 Jun 2020
 
 Moved the long history out of the header comments and into this file.
