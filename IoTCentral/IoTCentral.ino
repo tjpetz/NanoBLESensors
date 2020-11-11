@@ -30,6 +30,9 @@
 #define DEFAULT_MQTTROOTTOPIC "tjpetz.com/sensor"
 #define DEFAULT_SAMPLEINTERVAL 60
 
+// We will not attempt connections to peripherals with a less then -90 dBm RSSI.
+#define RSSI_LIMIT -90
+
 // Configuration settings managed by BLE and Flash
 ConfigService
     config(DEFAULT_HOSTNAME, DEFAULT_MQTTBROKER, DEFAULT_MQTTROOTTOPIC,
@@ -69,8 +72,8 @@ FSMState_t nextState = initializing;
 FSMState_t previousState = initializing;
 FSMState_t configurationPriorState = initializing;
 
-const unsigned long idleTime = 10000; // Time to spend in idle in mS
 const int watchdogTimeout = 16384;    // max timeout is 16.384 S
+unsigned long idleTime;               // sleep time in mS, computed from the configuration      
 
 unsigned long now = 0;
 unsigned long lastMeasureTime = 0;
@@ -186,7 +189,9 @@ void initializeRTC() {
 
 /** @brief send the measurements via mqtt
  *  @return true if success */
-bool sendMeasurementsToMQTT(const EnvironmentSensor& sensor) {
+bool sendMeasurementsToMQTT(float temperature, float humidity, float pressure, 
+  const char* name, const char *location) {
+  
   bool status = false;
 
   DEBUG_PRINTF("Attempting to send measurement\n");
@@ -196,7 +201,8 @@ bool sendMeasurementsToMQTT(const EnvironmentSensor& sensor) {
     DEBUG_PRINTF("Attempting to connect to the MQTT broker: %s\n",
                  config.mqttBroker);
 
-    mqttClient.setConnectionTimeout(4000);
+    // mqttClient.setConnectionTimeout(4000);
+    Watchdog.reset();
     if (!mqttClient.connect(config.mqttBroker, port)) {
       DEBUG_PRINTF("MQTT connection failed! Error code = %d\n",
                    mqttClient.connectError());
@@ -206,7 +212,7 @@ bool sendMeasurementsToMQTT(const EnvironmentSensor& sensor) {
       char topic[MAX_TOPIC_LENGTH];
 
       snprintf(topic, sizeof(topic), "%s/%s/environment", config.topicRoot,
-               sensor.name());
+               name);
 
       DEBUG_PRINTF("Topic = %s\n", topic);
       mqttClient.beginMessage(topic);
@@ -220,9 +226,7 @@ bool sendMeasurementsToMQTT(const EnvironmentSensor& sensor) {
           msg, sizeof(msg),
           "{ \"sensor\": \"%s\", \"location\": \"%s\", \"sampleTime\": \"%s\", "
           "\"temperature\": %.2f, \"humidity\": %.2f, \"pressure\": %.2f }",
-          // connectedDeviceName.c_str(), currentLocationName.c_str(), dateTime,
-          // currentTemperature, currentHumidity, currentPressure);
-          sensor.name(), sensor.location(), sensor.temperature(), sensor.humidity(), sensor.pressure());
+          name, location, dateTime, temperature, humidity, pressure);
       DEBUG_PRINTF("Message = %s\n", msg);
       mqttClient.print(msg);
       mqttClient.endMessage();
@@ -298,7 +302,7 @@ void loop() {
   case initializing:
     // For for initialization
     if (!config.isInitialized) {
-      BLE.poll(idleTime);
+      BLE.poll();
     } else {
       // Complete the initialization
       DEBUG_PRINTF("Completing the initialization\n");
@@ -311,6 +315,8 @@ void loop() {
       BLE.begin();
       BLE.addService(config.getConfigService());
       BLE.setAdvertisedService(config.getConfigService());
+      // After initialization we advertize less frequently to save power
+      BLE.setAdvertisingInterval(3200);     // Advertize ever 2000 ms (1000 / 0.625)
       BLE.advertise();
 
       BLE.setEventHandler(BLEConnected, onCentralConnected);
@@ -322,6 +328,7 @@ void loop() {
 
   case start_scan:
 
+    discoveredSensors.clear();    // empty the list from any previous scan.
     BLE.scanForUuid(EnvironmentSensor::environmentServiceUUID);
     scanStartTime = millis();
     nextState = scanning;
@@ -336,7 +343,9 @@ void loop() {
     // Add any peripherals we find to our map of discovered devices
     if (BLEDevice peripheral = BLE.available()) {
       DEBUG_PRINTF("while scanning found %s (%d dBm)\n", peripheral.address().c_str(), peripheral.rssi());
-      discoveredSensors.insert(std::pair<String, EnvironmentSensor>(peripheral.address(), EnvironmentSensor(peripheral)));
+      if (peripheral.rssi() >= RSSI_LIMIT) {
+        discoveredSensors.insert(std::pair<String, EnvironmentSensor>(peripheral.address(), EnvironmentSensor(peripheral)));
+      }
     }
 
     if (millis() - scanStartTime <= maxScanTime) {
@@ -360,8 +369,12 @@ void loop() {
     // loop through the sensor and read their values
     for (auto s = discoveredSensors.begin(); s != discoveredSensors.end(); s++) {
       DEBUG_PRINTF(" reading sensor %s\n", s->first.c_str());
-      s->second.readSensor();
+      bool success = s->second.readSensor();
       s->second.disconnect();
+      if (!success) {
+        // we failed to read this sensor, so remove it from this scan
+        discoveredSensors.erase(s);
+      }
     }
 
     nextState = sending_measurements;
@@ -376,6 +389,13 @@ void loop() {
       nextState = idle; // force a change to idle
     } else {
 
+      if (discoveredSensors.size() == 0) {
+        // We don't have any measurements that we successfully received so just go to idle
+        DEBUG_PRINTF("No Sensors with measurements to send.\n")
+        nextState = idle;
+        break;
+      }
+
       DEBUG_PRINTF("Sending Measurements...\n");
 
       BLE.disconnect();
@@ -383,19 +403,20 @@ void loop() {
 
       delay(1750); // Delay to allow the Nina radio module to reset
 
-      Watchdog.reset();
-
       // Send each sensor's reading
       for (auto s = discoveredSensors.begin(); s != discoveredSensors.end(); s++) {
         DEBUG_PRINTF("Sending measurement for sensor %s\n", s->first.c_str());
+        Watchdog.reset();
         retryCounter = 0;
-        success = sendMeasurementsToMQTT(s->second);
+        success = sendMeasurementsToMQTT(s->second.temperature(), s->second.humidity(),
+          s->second.pressure(), s->second.name(), s->second.location());
 
         while (!success && (retryCounter < maxTries)) {
           Watchdog.reset();
           delay(500 * (retryCounter + 1));
           ++retryCounter;
-          success = sendMeasurementsToMQTT(s->second);
+          success = sendMeasurementsToMQTT(s->second.temperature(), s->second.humidity(),
+          s->second.pressure(), s->second.name(), s->second.location());
         }
 
         if (success) {
@@ -405,6 +426,12 @@ void loop() {
         }
 
       }
+    
+      BLE.begin();
+      BLE.addService(config.getConfigService());
+      BLE.setAdvertisedService(config.getConfigService());
+      BLE.advertise();
+
     }
 
     break;
@@ -413,14 +440,28 @@ void loop() {
 
     DEBUG_PRINTF("Entering idle.\n");
 
+    // TODO: need to think about how we can go low power and still respond to BLE...
+    //  and do we even want to respond to BLE during this time.
     startDelayTime = millis();
-    Watchdog.reset();
-    BLE.poll(idleTime);
+    idleTime = config.sampleInterval * 1000;
+    DEBUG_PRINTF("Sleep for %lu mS starting at %lu mS \n", idleTime, startDelayTime);
+
+    while ((millis() - startDelayTime) < idleTime) {
+      // We need to sleep in short intervals so we can reset the watchdog timer
+      Watchdog.reset();
+      unsigned long remainingTime = idleTime - (millis() - startDelayTime);
+      DEBUG_PRINTF("Remaining sleep time = %lu mS\n", remainingTime);
+      if (remainingTime >= (watchdogTimeout - 1000)) {
+        BLE.poll(watchdogTimeout - 1000);
+      } else {
+        BLE.poll(remainingTime);
+      }
+      Watchdog.reset();
+    }
 
     DEBUG_PRINTF("Waking from idle. Slept for %lu mS.  Restarting BLE.\n",
                  millis() - startDelayTime);
 
-    Watchdog.reset();
     nextState = start_scan;
     break;
 

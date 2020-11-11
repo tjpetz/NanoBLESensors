@@ -52,6 +52,8 @@ protected:
   BLEDescriptor sampleIntervalDescriptor_;
   BLEStringCharacteristic lockCharacteristic_;
 
+  void debug_print_configuration();
+  
 private:
   char configurationPassword[64]; /** password to lock and unlock the
                                    configuration */
