@@ -5,6 +5,7 @@
       "includePath": [
         "${workspaceFolder}/**",
         "${env:HOME}/Library/Arduino15/packages/arduino/hardware/mbed/1.1.6/cores/arduino/**",
+        "${env:HOME}/Library/Arduino15/packages/arduino/hardware/mbed/1.1.6/cores/arduino/api/**",
         "${env:HOME}/Library/Arduino15/packages/arduino/hardware/mbed/1.1.6/variants/ARDUINO_NANO33BLE",
         "${env:HOME}/Library/Arduino15/packages/arduino/hardware/mbed/1.1.6/libraries/**",
         "${env:HOME}/Documents/Arduino/libraries/**",

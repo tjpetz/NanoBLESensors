@@ -19,6 +19,7 @@
 #include "BLEEnvironmentMonitor.h"
 #include "BatteryMonitor.h"
 #include "ColorLED.h"
+#define _DEBUG_
 #include "Debug.h"
 #include "PagingOLEDDisplay.h"
 #include "Watchdog.h"
@@ -47,7 +48,7 @@ int lastCentralRSSI = 0;
 
 BatteryMonitor batteryMonitor(A0, D2); // BLE battery service
 BLEConfigure configuration;            // BLE configuration service
-BLEEnvironmentMonitor environmentMonitor("Location"); // BLE environment service
+BLEEnvironmentMonitor environmentMonitor(configuration.location); // BLE environment service
 
 PagingOLEDDisplay oledDisplay(128, 64, 7, D3); // the OLED display
 RGBled led; // onboard LEDs to signal humidity in range
@@ -73,6 +74,8 @@ void setup() {
 
   resetWDT();
 
+  configuration.debug_print_configuration();
+  
   DEBUG_PRINTF("sensorName = %s\n", configuration.sensorName);
   DEBUG_PRINTF("sensorLocation = %s\n", configuration.location);
   DEBUG_PRINTF("humidityGreenLimit = %d\n", configuration.humidityGreenLimit);
@@ -98,7 +101,10 @@ void setup() {
 
   BLE.setAppearance(5696); // Generic environmental sensor
   BLE.setAdvertisedService(environmentMonitor.getService());
-  // BLE.setAdvertisingInterval(400); // Adversive every 250 mS = (400 * 0.625ms)
+  BLE.setAdvertisingInterval(1600); // Advertise every 250 mS = (400 * 0.625ms)
+
+  NRF_RADIO->TXPOWER = 8;
+  
   BLE.advertise();
 
   DEBUG_PRINTF("BLE initialized, waiting for connections...\n");
@@ -117,9 +123,9 @@ void loop() {
   // Our loop must only monitor the sensors and update the characteristics
   // when they change
 
-  // We don't want to read the sensors at a greater frequency than 1Hz
+  // We don't want to read the sensors too frequentlt to save power
   long currentMillis = millis();
-  if (currentMillis - previousMillis >= 1000) {
+  if (currentMillis - previousMillis >= 60000) {
     previousMillis = currentMillis;
 
     environmentMonitor.measure();
@@ -190,7 +196,6 @@ void on_BLECentralConnected(BLEDevice central) {
   lastCentralAddr = central.address();
   lastCentralRSSI = central.rssi();
   digitalWrite(LED_BUILTIN, HIGH);
-  // BLE.stopAdvertise(); // Don't advertise while connected.
   BLE.advertise();
 }
 

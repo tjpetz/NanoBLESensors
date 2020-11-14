@@ -30,6 +30,8 @@ public:
   uint16_t humidityAmberLimit; /** humidity below this level and above green set
                                   the LED amber */
 
+  void debug_print_configuration();
+  
 protected:
   friend void on_lockConfig_Written(BLEDevice central,
                                     BLECharacteristic characteristic);

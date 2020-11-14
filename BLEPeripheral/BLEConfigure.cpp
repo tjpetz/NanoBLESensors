@@ -1,4 +1,5 @@
 #include "BLEConfigure.h"
+#define _DEBUG_
 #include "Debug.h"
 #include "Watchdog.h"
 
@@ -143,6 +144,7 @@ void BLEConfigure::updateConfig() {
   strncpy(newFlash.location, location, sizeof(newFlash.location));
   newFlash.humidityGreenLimit = humidityGreenLimit;
   newFlash.humidityAmberLimit = humidityAmberLimit;
+  strncpy(newFlash.configLockPassword, lockPassword_, sizeof(newFlash.configLockPassword)); 
 
   DEBUG_PRINTF("newFlash.sensor_name = %s\n", newFlash.sensor_name);
   DEBUG_PRINTF("newFlash.location = %s\n", newFlash.location);
@@ -150,7 +152,9 @@ void BLEConfigure::updateConfig() {
                newFlash.humidityGreenLimit);
   DEBUG_PRINTF("newFlash.humidityAmberLimit = %d\n",
                newFlash.humidityAmberLimit);
-
+  DEBUG_PRINTF("newFlash.configLockPassword = %s\n",
+               newFlash.configLockPassword);
+               
   resetWDT();
   writeFlashPage((uint32_t *)&flashConfig, (uint32_t *)&newFlash,
                  sizeof(newFlash));
@@ -170,26 +174,30 @@ void writeFlashPage(uint32_t *to, uint32_t *from, int len) {
   hexDumpMemory((uint8_t *)from, (unsigned int)len);
 
   // Erase the page
-  if (*(uint32_t *)NRF_NVMC->READY == 1) {
+  while (NRF_NVMC->READY != 1) {
+    ;
+  }
+  
+  if (NRF_NVMC->READY == 1) {
     DEBUG_PRINTF("Erasing...");
-    *(uint32_t *)NRF_NVMC->CONFIG = 0x02;
-    *(uint32_t *)NRF_NVMC->ERASEPAGE = (uint32_t)(tgt);
-    while (*(uint32_t *)NRF_NVMC->READY == 0)
+    NRF_NVMC->CONFIG = 0x02;
+    NRF_NVMC->ERASEPAGE = (uint32_t)(tgt);
+    while (NRF_NVMC->READY == 0)
       delay(85);
-    *(uint32_t *)NRF_NVMC->CONFIG = 0x00;
+    NRF_NVMC->CONFIG = 0x00;
     DEBUG_PRINTF("...Erased\n");
 
-    if (*(uint32_t *)NRF_NVMC->READY == 1) {
+    if (NRF_NVMC->READY == 1) {
       DEBUG_PRINTF("Writing to = 0x%08lx, from = 0x%08lx\n", (uint32_t)tgt,
                    (uint32_t)src);
       // write the values
-      *(uint32_t *)NRF_NVMC->CONFIG = 0x01;
+      NRF_NVMC->CONFIG = 0x01;
       for (int i = 0; i < len; i += 4) {
         *tgt++ = *src++;
-        while (*(uint32_t *)NRF_NVMC->READY == 0)
+        while (NRF_NVMC->READY == 0)
           delayMicroseconds(41);
       }
-      *(uint32_t *)NRF_NVMC->CONFIG = 0x00;
+      NRF_NVMC->CONFIG = 0x00;
     } else {
       DEBUG_PRINTF("... NOT ready to write to flash! ...\n");
     }
@@ -233,4 +241,16 @@ void hexDumpMemory(uint8_t *memStart, unsigned int nbrOfBytes) {
     }
   }
   Serial.println("");
+}
+
+void BLEConfigure::debug_print_configuration() {
+
+  DEBUG_PRINTF("BLE Configuration\n");
+  DEBUG_PRINTF("  sensor_name = %s\n", sensorName);
+  DEBUG_PRINTF("  location = %s\n", location);
+  DEBUG_PRINTF("  humidityGreenLimit = %d\n", humidityGreenLimit);
+  DEBUG_PRINTF("  humidityAmberLimit = %d\n", humidityAmberLimit);
+  DEBUG_PRINTF("  isLocked = %d\n", isLocked_);
+  DEBUG_PRINTF("  isInitialized = %d\n", isInitialized_);
+  DEBUG_PRINTF("  lock password = %s\n", lockPassword_);
 }
