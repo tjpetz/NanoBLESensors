@@ -31,7 +31,7 @@
 #define DEFAULT_SAMPLEINTERVAL 60
 
 // We will not attempt connections to peripherals with a less then -90 dBm RSSI.
-#define RSSI_LIMIT -90
+#define RSSI_LIMIT -95
 
 // Configuration settings managed by BLE and Flash
 ConfigService
@@ -47,6 +47,7 @@ const unsigned int MAX_TOPIC_LENGTH = 255;
 byte macAddress[6]; // MAC address of the Wifi which we'll use in reporting
 
 RTCZero rtc; // Real Time Clock so we can time stamp data
+unsigned long lastRTCSync;
 
 const int maxTries = 10; // Retry counters
 int retryCounter = 0;    // counter to keep track of failed connections
@@ -88,18 +89,55 @@ PagingOLEDDisplay oledDisplay(128, 32, 4, 2);
 /** @brief a map of the sensors discovered in each scan period. */
 std::map<String, EnvironmentSensor> discoveredSensors;
 
-/** @brief Initialize the RTC by calling NTP and setting the initial time in the
- * RTC */
-void initializeRTC() {
+/** @brief Update the RTC by calling NTP, requires WiFi to be available */
+bool updateRTC() {
   int maxTries = 10;
   int tries = 0;
 
-  DEBUG_PRINTF("Initializing the RTC via NTP\n");
-  DEBUG_PRINTF("Starting WiFi for NTP Connection\n");
+  if (WiFi.status() != WL_CONNECTED) {  
+    DEBUG_PRINTF("updateRTC: WiFi is not connected.\n")
+    return false;
+  }
+
+  Watchdog.reset();
+  time_t ntpTime = WiFi.getTime();
+
+  // try a few times to get the time, it takes a moment to reach the NTP
+  // servers.
+  while (ntpTime == 0 && tries < maxTries) {
+    Watchdog.reset();
+    ntpTime = WiFi.getTime();
+    tries++;
+    delay(500 * (tries + 1));
+  }
+
+  if (ntpTime == 0) {
+    DEBUG_PRINTF("updateRTC: Failed to contact the NTP Server, not updating the RTC.\n");
+    return false;
+  }
+
+  struct tm *t = gmtime(&ntpTime); // convert Unix epoch time to tm struct format
+  DEBUG_PRINTF("NTP Time = %04d-%02d-%02d %02d:%02d:%02d\n", t->tm_year + 1900,
+               t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+
+  rtc.setEpoch(ntpTime);
+  DEBUG_PRINTF("RTC Time = %04d-%02d-%02d %02d:%02d:%02d\n", rtc.getYear(),
+               rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(),
+               rtc.getSeconds());
+
+  lastRTCSync = millis();
+
+  return true;
+}
+
+/** @brief Connect to wifi with retries, force reboot if unsuccessful */
+bool connectWiFi() {
+  int maxTries = 10;
+  int tries = 0;
 
   while ((WiFi.begin(config.ssid, config.wifiPassword) != WL_CONNECTED) &&
          (tries < maxTries)) {
-    DEBUG_PRINTF("initializeRTC - Connection failed, reason = %d.\n",
+    DEBUG_PRINTF("connectWiFi(): Connection failed, reason = %d.\n",
                  WiFi.reasonCode());
     tries++;
     WiFi.disconnect();
@@ -112,49 +150,26 @@ void initializeRTC() {
     DEBUG_PRINTF("Failed to connect to wifi after %d tries.  Rebooting!\n",
                  tries);
     Serial.flush();
-    delay(3000);
+    delay(500);
     NVIC_SystemReset();
   }
 
-  Watchdog.reset();
-  DEBUG_PRINTF("WiFi Connected, address = %d.%d.%d.%d\n", WiFi.localIP()[0],
-               WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
+  return true;
+}
 
-  time_t ntpTime = WiFi.getTime();
+/** @brief Disconnect and end WiFi.  This is necessary before using BLE. */
+void disconnectWiFi() {
+  WiFi.disconnect();
+  WiFi.end();
+}
 
-  // try a few times to get the time, it takes a moment to reach the NTP
-  // servers.
-  while (ntpTime == 0 && tries < maxTries) {
-    ntpTime = WiFi.getTime();
-    tries++;
-    delay(500 * (tries + 1));
-  }
+/** @brief Initialize the RTC by calling NTP and setting the initial time in the RTC */
+void initializeRTC() {
 
-  Watchdog.reset();
-  // If we still have failed to get the time reset the board.
-  if (ntpTime == 0) {
-    DEBUG_PRINTF("Cannot get time from NTP so forcing a reset.\n");
-    // gracefully disconnect before rebooting
-    WiFi.disconnect();
-    WiFi.end();
-    Serial.flush();
-    delay(3000);
-    NVIC_SystemReset();
-  }
+  connectWiFi();
+  updateRTC();
 
-  struct tm *t =
-      gmtime(&ntpTime); // convert Unix epoch time to tm struct format
-  DEBUG_PRINTF("NTP Time = %04d-%02d-%02d %02d:%02d:%02d\n", t->tm_year + 1900,
-               t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
-
-  Watchdog.reset();
-  // Setup the RTC
-  rtc.begin();
-  rtc.setEpoch(ntpTime);
-  DEBUG_PRINTF("RTC Time = %04d-%02d-%02d %02d:%02d:%02d\n", rtc.getYear(),
-               rtc.getMonth(), rtc.getDay(), rtc.getHours(), rtc.getMinutes(),
-               rtc.getSeconds());
-
+  // Record the boot
   Watchdog.reset();
   if (!mqttClient.connect(config.mqttBroker, port)) {
     DEBUG_PRINTF("Error Connecting to mqtt broker\n");
@@ -177,14 +192,11 @@ void initializeRTC() {
     mqttClient.print(msg);
     mqttClient.endMessage();
     delay(mqttTxDelay);
+    mqttClient.stop();
     DEBUG_PRINTF("Sent message\n");
   }
   Watchdog.reset();
-
-  mqttClient.stop();
-
-  WiFi.disconnect();
-  WiFi.end();
+  disconnectWiFi();
 }
 
 /** @brief send the measurements via mqtt
@@ -195,53 +207,29 @@ bool sendMeasurementsToMQTT(float temperature, float humidity, float pressure,
   bool status = false;
 
   DEBUG_PRINTF("Attempting to send measurement\n");
+  Watchdog.reset();
 
-  if (WiFi.begin(config.ssid, config.wifiPassword) == WL_CONNECTED) {
+  char topic[MAX_TOPIC_LENGTH];
+  snprintf(topic, sizeof(topic), "%s/%s/environment", config.topicRoot,
+            name);
+  DEBUG_PRINTF("Topic = %s\n", topic);
 
-    DEBUG_PRINTF("Attempting to connect to the MQTT broker: %s\n",
-                 config.mqttBroker);
-
-    // mqttClient.setConnectionTimeout(4000);
-    Watchdog.reset();
-    if (!mqttClient.connect(config.mqttBroker, port)) {
-      DEBUG_PRINTF("MQTT connection failed! Error code = %d\n",
-                   mqttClient.connectError());
-    } else {
-      DEBUG_PRINTF("You're connected to the MQTT broker!\n");
-
-      char topic[MAX_TOPIC_LENGTH];
-
-      snprintf(topic, sizeof(topic), "%s/%s/environment", config.topicRoot,
-               name);
-
-      DEBUG_PRINTF("Topic = %s\n", topic);
-      mqttClient.beginMessage(topic);
-      char dateTime[32];
-      snprintf(dateTime, sizeof(dateTime), "%04d-%02d-%02dT%02d:%02d:%02d",
-               rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(),
-               rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
-      DEBUG_PRINTF("Sample Time = %s\n", dateTime);
-      char msg[255];
-      snprintf(
-          msg, sizeof(msg),
-          "{ \"sensor\": \"%s\", \"location\": \"%s\", \"sampleTime\": \"%s\", "
-          "\"temperature\": %.2f, \"humidity\": %.2f, \"pressure\": %.2f }",
-          name, location, dateTime, temperature, humidity, pressure);
-      DEBUG_PRINTF("Message = %s\n", msg);
-      mqttClient.print(msg);
-      mqttClient.endMessage();
-      delay(mqttTxDelay);
-    }
-    mqttClient.stop();
-    status = true;
-  } else {
-    DEBUG_PRINTF("Error/timeout connecting to WiFi: %d\n", WiFi.reasonCode());
-  }
-
-  DEBUG_PRINTF("Disconnecting from Wifi\n");
-  WiFi.disconnect();
-  WiFi.end();
-
+  mqttClient.beginMessage(topic);
+  char dateTime[32];
+  snprintf(dateTime, sizeof(dateTime), "%04d-%02d-%02dT%02d:%02d:%02d",
+            rtc.getYear() + 2000, rtc.getMonth(), rtc.getDay(),
+            rtc.getHours(), rtc.getMinutes(), rtc.getSeconds());
+  DEBUG_PRINTF("Sample Time = %s\n", dateTime);
+  char msg[255];
+  snprintf(
+      msg, sizeof(msg),
+      "{ \"sensor\": \"%s\", \"location\": \"%s\", \"sampleTime\": \"%s\", "
+      "\"temperature\": %.2f, \"humidity\": %.2f, \"pressure\": %.2f }",
+      name, location, dateTime, temperature, humidity, pressure);
+  DEBUG_PRINTF("Message = %s\n", msg);
+  mqttClient.print(msg);
+  mqttClient.endMessage();
+  status = true;
   return status;
 }
 
@@ -273,6 +261,10 @@ void setup() {
     DEBUG_PRINTF("Error initializing OLED display\n");
   }
 
+  // Start the RTC
+  rtc.begin();
+
+  // Setup BLE
   DEBUG_PRINTF("Starting BLE\n");
   while (!BLE.begin()) {
     DEBUG_PRINTF("Error starting BLE\n");
@@ -403,30 +395,51 @@ void loop() {
 
       delay(1750); // Delay to allow the Nina radio module to reset
 
-      // Send each sensor's reading
-      for (auto s = discoveredSensors.begin(); s != discoveredSensors.end(); s++) {
-        DEBUG_PRINTF("Sending measurement for sensor %s\n", s->first.c_str());
+      if (connectWiFi()) {
+        // resync the RTC if it's been a long time since the last resync
+        if ((millis() - lastRTCSync) >= 3600000) {
+          updateRTC();
+        }
+
         Watchdog.reset();
-        retryCounter = 0;
-        success = sendMeasurementsToMQTT(s->second.temperature(), s->second.humidity(),
-          s->second.pressure(), s->second.name(), s->second.location());
+        // connect to mqtt
+        if (mqttClient.connect(config.mqttBroker, port)) {
+ 
+          // Send each sensor's reading
+          for (auto s = discoveredSensors.begin(); s != discoveredSensors.end(); s++) {
+            DEBUG_PRINTF("Sending measurement for sensor %s\n", s->first.c_str());
+            Watchdog.reset();
+            retryCounter = 0;
+            success = sendMeasurementsToMQTT(s->second.temperature(), s->second.humidity(),
+              s->second.pressure(), s->second.name(), s->second.location());
 
-        while (!success && (retryCounter < maxTries)) {
-          Watchdog.reset();
-          delay(500 * (retryCounter + 1));
-          ++retryCounter;
-          success = sendMeasurementsToMQTT(s->second.temperature(), s->second.humidity(),
-          s->second.pressure(), s->second.name(), s->second.location());
-        }
-
-        if (success) {
-          nextState = idle;
+            while (!success && (retryCounter < maxTries)) {
+              Watchdog.reset();
+              delay(500 * (retryCounter + 1));
+              ++retryCounter;
+              success = sendMeasurementsToMQTT(s->second.temperature(), s->second.humidity(),
+              s->second.pressure(), s->second.name(), s->second.location());
+            }
+          }
+          delay(mqttTxDelay);
+          mqttClient.stop();
         } else {
-          nextState = restart;
+          DEBUG_PRINTF("Failed to connect to mqtt.\n");
+          success = false;
         }
 
+        disconnectWiFi();
+      } else {
+        DEBUG_PRINTF("loop: Error connecting to WiFi to send measurements.\n");
+        success = false;
       }
-    
+
+      if (success) {
+        nextState = idle;
+      } else {
+        nextState = restart;
+      }
+
       BLE.begin();
       BLE.addService(config.getConfigService());
       BLE.setAdvertisedService(config.getConfigService());

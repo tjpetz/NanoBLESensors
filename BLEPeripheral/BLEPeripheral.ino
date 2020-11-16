@@ -123,7 +123,7 @@ void loop() {
   // Our loop must only monitor the sensors and update the characteristics
   // when they change
 
-  // We don't want to read the sensors too frequentlt to save power
+  // We don't want to read the sensors too frequently to save power
   long currentMillis = millis();
   if (currentMillis - previousMillis >= 60000) {
     previousMillis = currentMillis;
